@@ -1,9 +1,14 @@
 {
   // Cloudflare Workers — раздача статического сайта (assets-only, без серверного кода).
   // Деплой: `npx wrangler deploy`. Файлы берутся из корня, лишнее исключено в .assetsignore.
-  "name": "usb",
+  // Публикуемся сразу на кастомный домен (workers.dev-поддомен не нужен).
+  "name": "usbc",
   "compatibility_date": "2025-06-01",
   "assets": {
     "directory": "./"
-  }
+  },
+  "routes": [
+    { "pattern": "rustforcevipe.com", "custom_domain": true },
+    { "pattern": "www.rustforcevipe.com", "custom_domain": true }
+  ]
 }
