@@ -288,8 +288,42 @@ document.querySelectorAll('.filter [data-tier]').forEach((btn) => {
   });
 });
 
+// --- Серверы (типы серверов Rust, сгруппированы) ---
+const SERVER_GROUPS = [
+  { key: 'type',  title: 'Тип сервера' },
+  { key: 'mode',  title: 'Режим геймплея' },
+  { key: 'limit', title: 'Лимит группы' },
+  { key: 'wipe',  title: 'Частота вайпа' },
+];
+const TONE_CLS = { green: 'badge--green', blue: 'badge--blue', red: 'badge--red', safe: 'badge--safe' };
+
+function renderServers() {
+  const root = el('servers-root');
+  if (!root || typeof SERVERS === 'undefined') return;
+
+  root.innerHTML = SERVER_GROUPS.map((g) => {
+    const items = SERVERS.filter((s) => s.group === g.key);
+    if (items.length === 0) return '';
+    const cards = items.map((s) => `
+      <article class="card">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:var(--space-sm)">
+          <div>
+            <h3 style="color:var(--color-fg); font-size:1.05rem; margin-bottom:2px">${s.nameRu}</h3>
+            <p style="color:var(--color-fg-muted); margin:0; font-size:0.78rem">${s.name}</p>
+          </div>
+          <span class="badge ${TONE_CLS[s.tone] || 'badge--safe'}"><span class="dot" aria-hidden="true"></span>${s.tag}</span>
+        </div>
+        <p style="margin:var(--space-md) 0 var(--space-xs)">${s.desc}</p>
+        <p style="color:var(--color-fg-muted); font-size:0.85rem; margin:0"><strong style="color:var(--color-secondary)">Кому:</strong> ${s.tip}</p>
+      </article>`).join('');
+    return `
+      <h3 style="margin:var(--space-2xl) 0 var(--space-md); color:var(--color-primary)">${g.title}</h3>
+      <div class="grid grid--auto">${cards}</div>`;
+  }).join('');
+}
+
 /* =============================================================================
-   4. 3D-КАРТА ОСТРОВА (Three.js + OrbitControls)
+   5. 3D-КАРТА ОСТРОВА (Three.js + OrbitControls)
    Это визуальная заглушка: процедурный «остров» с рельефом и морем.
    Ниже — комментарий, как позже подключить реальную карту по сиду через RustMaps.
 ============================================================================= */
@@ -469,7 +503,7 @@ async function initMap() {
 }
 
 /* =============================================================================
-   5. КАЛЬКУЛЯТОРЫ
+   6. КАЛЬКУЛЯТОРЫ
    Данные вынесены в редактируемые объекты — правьте цифры здесь.
 ============================================================================= */
 
@@ -592,6 +626,7 @@ function init() {
   renderBiomes();
   renderResources();
   renderMonuments('all');
+  renderServers();
 
   // Таймер
   renderWipeMeta();
