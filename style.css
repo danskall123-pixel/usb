@@ -410,6 +410,166 @@ td strong { color: var(--color-fg); }
   .map-hint { max-width: 85%; }
 }
 
+/* =============================================================================
+   ВИЗУАЛЬНЫЙ АПГРЕЙД (по ui-ux-pro-max: 3D/Hyperrealism + Skeuomorphism)
+   Текстуры, зерно, многослойные тени, сложные градиенты, металлик, свечение.
+   Правила идут в конце файла → усиливают/переопределяют базовые.
+============================================================================= */
+
+/* Тактильная «плёнка» зерна поверх всего фона (грануляция) */
+body::after {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 1;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.045; mix-blend-mode: overlay;
+}
+/* Контент и шапка — над зерном */
+.nav, main, .footer { position: relative; z-index: 2; }
+
+/* ---------- HERO: металл + тлеющие угли ---------- */
+.hero {
+  position: relative; overflow: hidden;
+  /* сложный градиент (много стопов) под «раскалённый металл» */
+  background:
+    radial-gradient(120% 90% at 50% -30%, rgba(249,115,22,0.22), rgba(234,88,12,0.10) 30%, transparent 60%),
+    linear-gradient(180deg, #2a2320 0%, #241f1b 35%, #1d1815 70%, #171310 100%);
+  border-color: #3a332e;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.06),
+    inset 0 -40px 80px rgba(0,0,0,0.5),
+    0 24px 60px rgba(0,0,0,0.6);
+}
+.hero > * { position: relative; z-index: 2; }
+/* Дрейфующие угли (искры) */
+.hero::before {
+  content: ""; position: absolute; inset: -20%; z-index: 1; pointer-events: none;
+  background-image:
+    radial-gradient(2px 2px at 15% 80%, rgba(249,115,22,0.9), transparent 60%),
+    radial-gradient(2px 2px at 35% 90%, rgba(234,88,12,0.8), transparent 60%),
+    radial-gradient(1.5px 1.5px at 55% 85%, rgba(251,146,60,0.9), transparent 60%),
+    radial-gradient(2px 2px at 75% 95%, rgba(234,88,12,0.7), transparent 60%),
+    radial-gradient(1.5px 1.5px at 90% 80%, rgba(249,115,22,0.8), transparent 60%),
+    radial-gradient(2px 2px at 25% 70%, rgba(251,146,60,0.7), transparent 60%),
+    radial-gradient(1.5px 1.5px at 65% 75%, rgba(234,88,12,0.8), transparent 60%);
+  filter: blur(0.3px);
+  animation: embers 9s linear infinite;
+}
+@keyframes embers {
+  from { transform: translateY(0) scale(1); opacity: 0.9; }
+  to   { transform: translateY(-60px) scale(1.05); opacity: 0.5; }
+}
+/* Пульсирующее зарево за таймером */
+.hero::after {
+  content: ""; position: absolute; left: 50%; top: 46%; z-index: 0;
+  width: 620px; height: 320px; transform: translate(-50%, -50%);
+  background: radial-gradient(closest-side, rgba(234,88,12,0.30), transparent 70%);
+  filter: blur(20px); pointer-events: none;
+  animation: forge 3.5s ease-in-out infinite;
+}
+@keyframes forge { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+.hero__eyebrow { text-shadow: 0 0 18px rgba(249,115,22,0.5); }
+.hero__title { text-shadow: 0 2px 0 rgba(0,0,0,0.4); letter-spacing: 0.03em; }
+
+/* ---------- Скеуоморфные ячейки таймера (металл + гравировка) ---------- */
+.count-unit {
+  background: linear-gradient(180deg, #2c2521 0%, #211c18 45%, #17120f 100%);
+  border: 1px solid #0d0a08;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.08),
+    inset 0 -8px 16px rgba(0,0,0,0.55),
+    0 10px 22px rgba(0,0,0,0.5);
+  position: relative; overflow: hidden;
+}
+/* верхний блик пластины */
+.count-unit::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 42%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.05), transparent);
+  pointer-events: none;
+}
+.count-unit__num {
+  text-shadow: 0 0 22px rgba(234,88,12,0.6), 0 2px 0 #000, 0 -1px 0 rgba(255,255,255,0.05);
+}
+
+/* ---------- Карточки: металл, HUD-скобки, многослойные тени ---------- */
+.card {
+  position: relative;
+  background: linear-gradient(180deg, #2a2623 0%, #221e1b 60%, #1c1815 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.04),
+    0 2px 4px rgba(0,0,0,0.3),
+    0 12px 28px rgba(0,0,0,0.45);
+  transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+}
+/* верхняя ржавая нить (проявляется на hover) */
+.card::before {
+  content: ""; position: absolute; left: 14px; right: 14px; top: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--color-primary), transparent);
+  opacity: 0; transition: opacity 200ms ease; border-radius: 2px;
+}
+/* HUD-скобка в углу */
+.card::after {
+  content: ""; position: absolute; top: 10px; right: 10px; width: 12px; height: 12px;
+  border-top: 2px solid var(--color-border); border-right: 2px solid var(--color-border);
+  border-top-right-radius: 4px; transition: border-color 200ms ease;
+}
+.card:hover {
+  transform: translateY(-3px);
+  border-color: var(--color-primary);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.06),
+    0 4px 8px rgba(0,0,0,0.35),
+    0 18px 40px rgba(0,0,0,0.55),
+    0 0 0 1px rgba(234,88,12,0.25),
+    0 12px 30px rgba(234,88,12,0.14);
+}
+.card:hover::before { opacity: 1; }
+.card:hover::after { border-color: var(--color-primary); }
+
+/* Появление карточек «лесенкой» */
+.grid .card { animation: rise 0.45s cubic-bezier(0.2,0.7,0.2,1) both; }
+.grid .card:nth-child(1){animation-delay:.02s} .grid .card:nth-child(2){animation-delay:.06s}
+.grid .card:nth-child(3){animation-delay:.10s} .grid .card:nth-child(4){animation-delay:.14s}
+.grid .card:nth-child(5){animation-delay:.18s} .grid .card:nth-child(6){animation-delay:.22s}
+.grid .card:nth-child(7){animation-delay:.26s} .grid .card:nth-child(8){animation-delay:.30s}
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+/* ---------- Заголовки секций: HUD-планка ---------- */
+.panel__head h2 { display: flex; align-items: center; gap: var(--space-md); }
+.panel__head h2::before {
+  content: ""; width: 6px; height: 1.1em; border-radius: 3px;
+  background: linear-gradient(180deg, var(--color-secondary), var(--color-primary));
+  box-shadow: 0 0 14px rgba(234,88,12,0.6); flex: 0 0 auto;
+}
+
+/* ---------- Навигация: свечение бренда и активной вкладки ---------- */
+.brand__mark { filter: drop-shadow(0 0 8px rgba(234,88,12,0.5)); }
+.tab[aria-selected="true"]::after { box-shadow: 0 0 12px rgba(234,88,12,0.8); height: 3px; }
+
+/* ---------- Кнопки: литой металл + свечение ---------- */
+.btn-primary {
+  background: linear-gradient(180deg, #f6772e 0%, #ea580c 55%, #c2410c 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), 0 8px 18px rgba(234,88,12,0.35);
+  text-shadow: 0 1px 0 rgba(0,0,0,0.35);
+}
+.btn-primary:hover { filter: brightness(1.06); }
+
+/* ---------- Значки: лёгкое внутреннее свечение ---------- */
+.badge { box-shadow: inset 0 1px 0 rgba(255,255,255,0.04); }
+.badge .dot { box-shadow: 0 0 8px currentColor; }
+.badge--green .dot { color: var(--color-tier-green); }
+.badge--blue  .dot { color: var(--color-tier-blue); }
+.badge--red   .dot { color: var(--color-tier-red); }
+
+/* ---------- Таблицы: шапка-HUD, ржавый ховер ---------- */
+thead th { text-transform: uppercase; }
+tbody tr { transition: background 150ms ease; }
+tbody tr:hover { background: linear-gradient(90deg, rgba(234,88,12,0.10), transparent); }
+
+/* ---------- 3D-сцена: рамка-иллюминатор ---------- */
+.map-stage {
+  box-shadow: inset 0 0 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05), 0 16px 40px rgba(0,0,0,0.5);
+}
+
 /* ---------- УВАЖЕНИЕ К prefers-reduced-motion ---------- */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
