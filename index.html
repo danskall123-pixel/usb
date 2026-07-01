@@ -7,6 +7,7 @@
   <title>Rust Wipe Hub — счётчик вайпа, монументы, 3D-карта, калькуляторы</title>
   <meta name="description" content="Хаб по Rust: живой счётчик до force wipe (первый четверг месяца, 19:00 UTC), гайды по биомам и ресурсам, монументы, 3D-карта острова и калькуляторы рейда/апкипа." />
 
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg" />
   <link rel="stylesheet" href="style.css" />
 
   <!-- Three.js для 3D-карты (модульная сборка через importmap) -->
@@ -27,11 +28,8 @@
   <header class="nav">
     <div class="container nav__inner">
       <div class="brand">
-        <!-- Иконка (inline SVG, не эмодзи): «шестерёнка/наковальня» индустриальный акцент -->
-        <svg class="brand__mark" width="26" height="26" viewBox="0 0 24 24" fill="none"
-             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-        </svg>
+        <!-- Логотип-эмблема (сгенерирован Gemini, SVG): шестерёнка + стрелка отсчёта -->
+        <img class="brand__mark" src="assets/logo.svg" width="30" height="30" alt="Логотип Rust Wipe Hub" />
         <span>RUST&nbsp;WIPE&nbsp;HUB</span>
       </div>
 
