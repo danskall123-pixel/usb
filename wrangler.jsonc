@@ -1,0 +1,9 @@
+{
+  // Cloudflare Workers — раздача статического сайта (assets-only, без серверного кода).
+  // Деплой: `npx wrangler deploy`. Файлы берутся из корня, лишнее исключено в .assetsignore.
+  "name": "usb",
+  "compatibility_date": "2025-06-01",
+  "assets": {
+    "directory": "./"
+  }
+}

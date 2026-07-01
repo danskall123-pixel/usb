@@ -1,0 +1,10 @@
+# Что НЕ раздавать как статику (gitignore-синтаксис).
+# Оставляем только сам сайт: index.html, style.css, script.js, data.js, assets/
+.git
+.gitignore
+.claude
+design-system
+README.md
+wrangler.jsonc
+.assetsignore
+WIFI.bat
