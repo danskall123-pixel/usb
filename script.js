@@ -193,14 +193,44 @@ function tickCountdown() {
    3. РЕНДЕР ДАННЫХ (биомы, ресурсы, монументы)
 ============================================================================= */
 
+/* --- Фирменные SVG-иконки (сгенерированы кодом), line-стиль 24×24 --- */
+const svgWrap = (inner) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${inner}</svg>`;
+const BIOME_ICONS = {
+  temperate: '<path d="M12 22v-4"/><path d="M12 18l-5-4h3l-4-4h3L9 3h6l-3 7h3l-4 4h3z"/>',
+  arid: '<path d="M10 22V6a2 2 0 1 1 4 0v10"/><path d="M10 13H7a2 2 0 0 1-2-2V9"/><path d="M14 11h3a2 2 0 0 1 2 2v2"/><path d="M7 22h10"/>',
+  arctic: '<path d="M12 2v20M3 7l18 10M21 7L3 17"/><path d="M9 4l3 2 3-2M9 20l3-2 3 2"/>',
+  tundra: '<path d="M2 20l6-11 4 6 3-4 7 9z"/>',
+};
+const RES_ICONS = {
+  wood: '<ellipse cx="5" cy="12" rx="2" ry="4"/><path d="M5 8h11a4 4 0 0 1 0 8H5"/>',
+  stone: '<path d="M6 20l-3-8 5-6 8 2 3 7-6 5z"/>',
+  'metal-ore': '<path d="M12 3l8 4v10l-8 4-8-4V7z"/><path d="M12 3v18M4 7l8 4 8-4"/>',
+  'sulfur-ore': '<path d="M9 3h6M10 3v6l-5 9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1l-5-9V3"/>',
+  cloth: '<rect x="6" y="4" width="12" height="16" rx="1"/><path d="M6 9h12M6 15h12"/>',
+  leather: '<path d="M5 4c4-2 10-2 14 0-1 5-1 11-4 16-2 2-4 2-6 0C6 15 6 9 5 4z"/>',
+  lowgrade: '<path d="M12 3s6 6 6 11a6 6 0 0 1-12 0c0-5 6-11 6-11z"/>',
+  crude: '<path d="M12 3s6 7 6 11a6 6 0 1 1-12 0c0-4 6-11 6-11z"/>',
+  scrap: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/>',
+  components: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/>',
+  hqm: '<path d="M12 2l8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4M4 17l8 4 8-4"/>',
+};
+const FALLBACK_ICON = '<rect x="4" y="4" width="16" height="16" rx="2"/>';
+const biomeIcon = (id) => svgWrap(BIOME_ICONS[id] || FALLBACK_ICON);
+const resIcon = (id) => svgWrap(RES_ICONS[id] || FALLBACK_ICON);
+
 // --- Биомы ---
 function renderBiomes() {
   const grid = el('biomes-grid');
   if (!grid || typeof BIOMES === 'undefined') return;
   grid.innerHTML = BIOMES.map((b) => `
     <article class="card">
-      <h3 style="color:var(--color-primary); font-size:1.1rem">${b.nameRu}</h3>
-      <p style="color:var(--color-fg-muted); margin-top:0; font-size:0.82rem">${b.name}</p>
+      <div class="biome-head">
+        <span class="biome-ic">${biomeIcon(b.id)}</span>
+        <div>
+          <h3 style="color:var(--color-primary); font-size:1.1rem; margin:0">${b.nameRu}</h3>
+          <p style="color:var(--color-fg-muted); margin:0; font-size:0.82rem">${b.name}</p>
+        </div>
+      </div>
       <p><strong>Климат:</strong> ${b.climate}</p>
       <p><strong>Ресурсы:</strong> ${b.resources}</p>
       <p><strong>Живность:</strong> ${b.animals}</p>
@@ -214,7 +244,7 @@ function renderResources() {
   if (!tbody || typeof RESOURCES === 'undefined') return;
   tbody.innerHTML = RESOURCES.map((r) => `
     <tr>
-      <td><strong>${r.nameRu}</strong><br><span style="color:var(--color-fg-muted); font-size:0.78rem">${r.name}</span></td>
+      <td><div class="res-name">${resIcon(r.id)}<span><strong>${r.nameRu}</strong><br><span style="color:var(--color-fg-muted); font-size:0.78rem">${r.name}</span></span></div></td>
       <td>${r.source}</td>
       <td>${r.where}</td>
       <td style="color:var(--color-fg-muted)">${r.tip}</td>
@@ -370,6 +400,9 @@ async function loadLiveServers() {
 
   status.textContent = 'Загрузка серверов…';
   tbody.setAttribute('aria-busy', 'true');
+  // Скелетон-заглушка на время запроса
+  tbody.innerHTML = Array.from({ length: 6 }).map(() =>
+    `<tr>${'<td><div class="sk-line"></div></td>'.repeat(6)}</tr>`).join('');
 
   // Собираем URL (скобки в filter[...] допустимы — API их принимает)
   const url = new URL('https://api.battlemetrics.com/servers');
