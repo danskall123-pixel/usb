@@ -786,6 +786,91 @@ function calcUpkeep() {
 });
 
 /* =============================================================================
+   7. АТМОСФЕРНЫЙ ЗВУК (процедурный, Web Audio API — без внешних файлов)
+   Ветер (отфильтрованный шум с «порывами») + низкий индустриальный дрон +
+   редкое потрескивание углей. Включается по клику (нужен жест пользователя).
+============================================================================= */
+let audioCtx = null, ambientMaster = null, crackleTimer = null, ambientOn = false;
+
+function buildNoiseBuffer(ctx) {
+  const size = 2 * ctx.sampleRate;
+  const buf = ctx.createBuffer(1, size, ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  let last = 0;
+  for (let i = 0; i < size; i++) {
+    const white = Math.random() * 2 - 1;
+    last = (last + 0.02 * white) / 1.02; // «коричневый» шум — мягче
+    data[i] = last * 3.2;
+  }
+  return buf;
+}
+
+function spawnCrackle() {
+  if (!audioCtx || !ambientOn) return;
+  const t = audioCtx.currentTime;
+  const src = audioCtx.createBufferSource();
+  const b = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.12, audioCtx.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3);
+  src.buffer = b;
+  const bp = audioCtx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1400 + Math.random() * 1600; bp.Q.value = 0.8;
+  const g = audioCtx.createGain(); g.gain.value = 0.0;
+  g.gain.setValueAtTime(0.12, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+  src.connect(bp).connect(g).connect(ambientMaster);
+  src.start(t);
+}
+
+function startAmbient() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  ambientMaster = audioCtx.createGain();
+  ambientMaster.gain.value = 0.0001;
+  ambientMaster.connect(audioCtx.destination);
+
+  // Ветер: коричневый шум -> lowpass, с медленными «порывами» (LFO)
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buildNoiseBuffer(audioCtx); noise.loop = true;
+  const windLP = audioCtx.createBiquadFilter(); windLP.type = 'lowpass'; windLP.frequency.value = 480;
+  const windGain = audioCtx.createGain(); windGain.gain.value = 0.5;
+  noise.connect(windLP).connect(windGain).connect(ambientMaster);
+  const lfo = audioCtx.createOscillator(); lfo.frequency.value = 0.07;
+  const lfoGain = audioCtx.createGain(); lfoGain.gain.value = 0.35;
+  lfo.connect(lfoGain).connect(windGain.gain);
+
+  // Низкий индустриальный дрон (несколько расстроенных пил через lowpass)
+  const droneBus = audioCtx.createGain(); droneBus.gain.value = 0.05; droneBus.connect(ambientMaster);
+  [55, 55.5, 82.4].forEach((f) => {
+    const o = audioCtx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f;
+    const lp = audioCtx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 200;
+    const g = audioCtx.createGain(); g.gain.value = 0.3;
+    o.connect(lp).connect(g).connect(droneBus); o.start();
+  });
+
+  noise.start(); lfo.start();
+  ambientMaster.gain.exponentialRampToValueAtTime(0.16, audioCtx.currentTime + 2.5); // плавный fade-in
+  crackleTimer = setInterval(() => { if (Math.random() < 0.6) spawnCrackle(); }, 850);
+}
+
+function stopAmbient() {
+  if (!audioCtx) return;
+  clearInterval(crackleTimer); crackleTimer = null;
+  const t = audioCtx.currentTime;
+  ambientMaster.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+  const ctx = audioCtx; audioCtx = null;
+  setTimeout(() => ctx.close(), 800);
+}
+
+(function wireAmbient() {
+  const btn = el('ambient-toggle');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    ambientOn = !ambientOn;
+    btn.setAttribute('aria-pressed', String(ambientOn));
+    btn.setAttribute('aria-label', ambientOn ? 'Выключить атмосферный звук' : 'Включить атмосферный звук');
+    if (ambientOn) startAmbient(); else stopAmbient();
+  });
+})();
+
+/* =============================================================================
    ИНИЦИАЛИЗАЦИЯ
 ============================================================================= */
 function init() {

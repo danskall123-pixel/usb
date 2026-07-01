@@ -7,7 +7,7 @@
 ============================================================================= */
 
 /* Шрифты: Orbitron (заголовки/HUD) + JetBrains Mono (текст/данные/таймеры) */
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Orbitron:wght@700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Oswald:wght@500;600;700&family=Orbitron:wght@700;900&display=swap');
 
 /* ---------- ТОКЕНЫ (единый источник правды) ---------- */
 :root {
@@ -55,8 +55,10 @@
   --shadow-lg: 0 12px 28px rgba(0,0,0,0.6);
   --shadow-glow: 0 0 0 1px rgba(234,88,12,0.4), 0 8px 24px rgba(234,88,12,0.15);
 
-  /* Типографика */
-  --font-display: 'Orbitron', system-ui, sans-serif;
+  /* Типографика: индустриальный стенсил-плакат (Oswald, есть кириллица) +
+     HUD-техно для цифр/меток (Orbitron) + моно для данных */
+  --font-display: 'Oswald', 'Impact', system-ui, sans-serif;
+  --font-hud: 'Orbitron', system-ui, sans-serif;
   --font-body: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
 
   /* Высота фиксированной шапки — для отступов якорей/контента */
@@ -89,6 +91,8 @@ h1, h2, h3, .display {
   line-height: 1.15;
   margin: 0 0 var(--space-md);
 }
+/* Плакатный верхний регистр для крупных заголовков (стенсил-вайб) */
+h1, h2, .hero__title { text-transform: uppercase; letter-spacing: 0.05em; }
 
 a { color: var(--color-secondary); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -260,7 +264,7 @@ td strong { color: var(--color-fg); }
   box-shadow: var(--shadow-lg);
 }
 .hero__eyebrow {
-  color: var(--color-secondary); font-family: var(--font-display);
+  color: var(--color-secondary); font-family: var(--font-hud);
   font-size: 0.8rem; letter-spacing: 0.25em; text-transform: uppercase;
   margin-bottom: var(--space-sm);
 }
@@ -279,7 +283,7 @@ td strong { color: var(--color-fg); }
   padding: var(--space-md);
 }
 .count-unit__num {
-  font-family: var(--font-display); font-weight: 900;
+  font-family: var(--font-hud); font-weight: 900;
   font-size: clamp(2rem, 7vw, 3.4rem); color: var(--color-primary);
   line-height: 1;
 }
@@ -422,8 +426,32 @@ body::after {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   opacity: 0.045; mix-blend-mode: overlay;
 }
+/* Крупные ржавые разводы (грубая грануляция поверх зерна) */
+body::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 1;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cfilter id='r'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.012' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.4 1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23r)'/%3E%3C/svg%3E");
+  background-size: 700px 700px; opacity: 0.10; mix-blend-mode: overlay;
+}
 /* Контент и шапка — над зерном */
 .nav, main, .footer { position: relative; z-index: 2; }
+
+/* Hazard-полоса под шапкой (стройка/опасность — вайб Rust) */
+.nav { position: sticky; }
+.nav::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -4px; height: 4px;
+  background: repeating-linear-gradient(45deg, #100a06 0 11px, #ea580c 11px 22px);
+  opacity: 0.85;
+}
+
+/* Заклёпки по углам металлических карточек */
+.card {
+  background-image:
+    radial-gradient(circle at 11px 11px, rgba(255,255,255,0.10) 0 1.5px, rgba(0,0,0,0.5) 2px, transparent 3px),
+    radial-gradient(circle at calc(100% - 11px) 11px, rgba(255,255,255,0.10) 0 1.5px, rgba(0,0,0,0.5) 2px, transparent 3px),
+    radial-gradient(circle at 11px calc(100% - 11px), rgba(255,255,255,0.10) 0 1.5px, rgba(0,0,0,0.5) 2px, transparent 3px),
+    radial-gradient(circle at calc(100% - 11px) calc(100% - 11px), rgba(255,255,255,0.10) 0 1.5px, rgba(0,0,0,0.5) 2px, transparent 3px),
+    linear-gradient(180deg, #2a2623 0%, #221e1b 60%, #1c1815 100%);
+}
 
 /* ---------- HERO: металл + тлеющие угли ---------- */
 .hero {
@@ -594,6 +622,30 @@ tbody tr:hover { background: linear-gradient(90deg, rgba(234,88,12,0.10), transp
 /* Иконка в ячейке ресурса */
 .res-name { display: flex; align-items: center; gap: var(--space-sm); }
 .res-name .ic { width: 20px; height: 20px; color: var(--color-secondary); stroke: var(--color-secondary); }
+
+/* ---------- Кнопка атмосферного звука ---------- */
+.ambient-btn {
+  position: fixed; right: var(--space-lg); bottom: var(--space-lg); z-index: 60;
+  display: inline-flex; align-items: center; gap: var(--space-sm);
+  padding: 10px 16px; min-height: 44px; cursor: pointer;
+  font-family: var(--font-hud); font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--color-fg-muted);
+  background: linear-gradient(180deg, #2a2521, #1a1512);
+  border: 1px solid var(--color-border); border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 10px 24px rgba(0,0,0,0.5);
+  transition: color 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+}
+.ambient-btn:hover { color: var(--color-fg); border-color: var(--color-primary); }
+.ambient-btn .ambient-ic { width: 20px; height: 20px; flex: 0 0 auto; }
+.ambient-btn .wave { opacity: 0.25; transition: opacity 200ms ease; }
+/* Активное состояние — светится, «волны» пульсируют */
+.ambient-btn[aria-pressed="true"] {
+  color: var(--color-primary); border-color: var(--color-primary);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(234,88,12,0.4), 0 10px 28px rgba(234,88,12,0.25);
+}
+.ambient-btn[aria-pressed="true"] .wave { opacity: 1; animation: sound 1.6s ease-in-out infinite; }
+@keyframes sound { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
+@media (max-width: 640px) { .ambient-btn .ambient-label { display: none; } .ambient-btn { padding: 12px; } }
 
 /* ---------- Скелетон загрузки (сервера) ---------- */
 .sk-line {
