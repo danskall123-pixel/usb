@@ -1,0 +1,97 @@
+<svg viewBox="0 0 1600 700" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <!-- Небо: уголь сверху -> раскалённый оранжевый у горизонта -->
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#0b0a09"/>
+      <stop offset="42%" stop-color="#17110d"/>
+      <stop offset="68%" stop-color="#3a1c0b"/>
+      <stop offset="84%" stop-color="#8a3410"/>
+      <stop offset="100%" stop-color="#c2510f"/>
+    </linearGradient>
+    <!-- Зарево солнца -->
+    <radialGradient id="sun" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"  stop-color="#ffd9a0"/>
+      <stop offset="28%" stop-color="#ff9a3c" stop-opacity="0.9"/>
+      <stop offset="60%" stop-color="#ea580c" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#ea580c" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="far" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7a3413"/><stop offset="100%" stop-color="#4d2410"/>
+    </linearGradient>
+    <linearGradient id="mid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3f1f0f"/><stop offset="100%" stop-color="#2a1409"/>
+    </linearGradient>
+    <linearGradient id="near" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#221410"/><stop offset="100%" stop-color="#140c09"/>
+    </linearGradient>
+    <!-- Виньетка + затемнение низа для читаемости текста -->
+    <radialGradient id="vig" cx="50%" cy="42%" r="75%">
+      <stop offset="55%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.6"/>
+    </radialGradient>
+    <linearGradient id="floorFade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0e0806" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#0e0806" stop-opacity="0.9"/>
+    </linearGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="6"/></filter>
+  </defs>
+
+  <!-- Небо -->
+  <rect width="1600" height="700" fill="url(#sky)"/>
+  <!-- Солнце/зарево у горизонта -->
+  <circle cx="720" cy="565" r="360" fill="url(#sun)"/>
+  <circle cx="720" cy="560" r="70" fill="#ffcaa0" opacity="0.9" filter="url(#soft)"/>
+
+  <!-- Дальние горы -->
+  <path fill="url(#far)" opacity="0.85"
+    d="M0,560 L120,520 L220,545 L340,505 L470,548 L600,512 L740,540 L880,508 L1020,545 L1180,518 L1320,548 L1460,520 L1600,545 L1600,700 L0,700 Z"/>
+  <!-- Средние горы -->
+  <path fill="url(#mid)"
+    d="M0,590 L90,566 L210,586 L330,556 L470,590 L590,560 L720,586 L860,558 L1000,588 L1150,560 L1300,590 L1450,566 L1600,588 L1600,700 L0,700 Z"/>
+
+  <!-- Нефтевышка (силуэт) справа с факелом -->
+  <g fill="#0e0908">
+    <polygon points="1200,585 1215,585 1240,470 1225,470"/>
+    <polygon points="1300,585 1285,585 1260,470 1275,470"/>
+    <rect x="1236" y="452" width="28" height="20"/>
+    <rect x="1246" y="360" width="8" height="96"/>
+    <!-- поперечины фермы -->
+    <path stroke="#0e0908" stroke-width="4" d="M1225,470 L1275,540 M1275,470 L1225,540 M1231,510 L1269,510 M1234,545 L1266,545"/>
+  </g>
+  <!-- Факел вышки -->
+  <path fill="#ff8a2b" opacity="0.95" d="M1250,360 q-16,-30 4,-52 q-2,26 14,34 q10,-14 4,-30 q22,26 6,54 q-14,18 -32,-6 Z"/>
+  <circle cx="1250" cy="344" r="26" fill="#ff8a2b" opacity="0.25" filter="url(#soft)"/>
+
+  <!-- Мёртвое дерево слева (силуэт) -->
+  <g stroke="#120b08" stroke-width="6" fill="none" stroke-linecap="round">
+    <path d="M250,660 L252,560"/>
+    <path d="M251,600 L214,566 M212,566 L196,556 M251,585 L286,556 M287,556 L305,548 M251,612 L228,596"/>
+  </g>
+
+  <!-- Ближние холмы / земля -->
+  <path fill="url(#near)"
+    d="M0,632 L120,612 L260,636 L360,616 L520,640 L680,618 L820,640 L980,616 L1140,640 L1300,614 L1460,638 L1600,616 L1600,700 L0,700 Z"/>
+  <!-- Камни на переднем плане -->
+  <g fill="#0f0907">
+    <path d="M120,700 q40,-60 110,-40 q40,12 34,40 Z"/>
+    <path d="M980,700 q60,-52 140,-24 q30,14 26,24 Z"/>
+    <path d="M560,700 q30,-30 74,-18 q20,8 16,18 Z"/>
+  </g>
+
+  <!-- Искры/угли -->
+  <g fill="#ff9a3c">
+    <circle cx="430" cy="330" r="2.4" opacity="0.9"/>
+    <circle cx="510" cy="410" r="1.8" opacity="0.7"/>
+    <circle cx="640" cy="300" r="2.2" opacity="0.8"/>
+    <circle cx="820" cy="360" r="1.6" opacity="0.7"/>
+    <circle cx="900" cy="270" r="2.4" opacity="0.85"/>
+    <circle cx="1030" cy="380" r="1.8" opacity="0.7"/>
+    <circle cx="1160" cy="300" r="2.2" opacity="0.8"/>
+    <circle cx="360" cy="420" r="1.6" opacity="0.6"/>
+    <circle cx="700" cy="440" r="2" opacity="0.7"/>
+  </g>
+
+  <!-- Затемнение низа и виньетка -->
+  <rect x="0" y="470" width="1600" height="230" fill="url(#floorFade)"/>
+  <rect width="1600" height="700" fill="url(#vig)"/>
+</svg>

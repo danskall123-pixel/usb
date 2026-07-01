@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <!-- Адаптивность: масштаб не отключаем (a11y) -->
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Rust Wipe Hub — счётчик вайпа, монументы, 3D-карта, калькуляторы</title>
+  <meta name="description" content="Хаб по Rust: живой счётчик до force wipe (первый четверг месяца, 19:00 UTC), гайды по биомам и ресурсам, монументы, 3D-карта острова и калькуляторы рейда/апкипа." />
+
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg" />
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- Three.js для 3D-карты (модульная сборка через importmap) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- Ссылка для клавиатуры: пропустить навигацию -->
+  <a class="skip-link" href="#main">Перейти к контенту</a>
+
+  <!-- ============ ШАПКА / ВКЛАДКИ ============ -->
+  <header class="nav">
+    <div class="container nav__inner">
+      <div class="brand">
+        <!-- Логотип-эмблема (сгенерирован Gemini, SVG): шестерёнка + стрелка отсчёта -->
+        <img class="brand__mark" src="assets/logo.svg" width="30" height="30" alt="Логотип Rust Wipe Hub" />
+        <span>RUST&nbsp;WIPE&nbsp;HUB</span>
+      </div>
+
+      <!-- Вкладки (роль tablist). Активная подсвечивается rust-цветом -->
+      <nav aria-label="Основная навигация">
+        <ul class="tabs" role="tablist" id="tablist">
+          <li role="presentation">
+            <button class="tab" role="tab" id="tab-home" aria-controls="panel-home" aria-selected="true" data-tab="home">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              Вайп
+            </button>
+          </li>
+          <li role="presentation">
+            <button class="tab" role="tab" id="tab-resources" aria-controls="panel-resources" aria-selected="false" data-tab="resources" tabindex="-1">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4"/><path d="M3 17l9 4 9-4"/></svg>
+              Ресурсы и биомы
+            </button>
+          </li>
+          <li role="presentation">
+            <button class="tab" role="tab" id="tab-monuments" aria-controls="panel-monuments" aria-selected="false" data-tab="monuments" tabindex="-1">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18"/><path d="M6 21V8l6-4 6 4v13"/><path d="M10 21v-6h4v6"/></svg>
+              Монументы
+            </button>
+          </li>
+          <li role="presentation">
+            <button class="tab" role="tab" id="tab-servers" aria-controls="panel-servers" aria-selected="false" data-tab="servers" tabindex="-1">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/><path d="M7 7h.01M7 17h.01"/></svg>
+              Серверы
+            </button>
+          </li>
+          <li role="presentation">
+            <button class="tab" role="tab" id="tab-map" aria-controls="panel-map" aria-selected="false" data-tab="map" tabindex="-1">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3 3 6v15l6-3 6 3 6-3V3l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg>
+              3D-карта
+            </button>
+          </li>
+          <li role="presentation">
+            <button class="tab" role="tab" id="tab-calc" aria-controls="panel-calc" aria-selected="false" data-tab="calc" tabindex="-1">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 10h8M8 14h3M8 18h3M15 14v4"/></svg>
+              Калькуляторы
+            </button>
+          </li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="container">
+
+    <!-- ============ 1. ГЛАВНАЯ: СЧЁТЧИК ДО FORCE WIPE ============ -->
+    <section class="panel is-active" id="panel-home" role="tabpanel" aria-labelledby="tab-home" tabindex="0">
+      <div class="hero" id="hero">
+        <!-- Иллюстрированный задник (SVG-арт, сгенерирован кодом) -->
+        <div class="hero__art" aria-hidden="true"></div>
+        <p class="hero__eyebrow">Следующий Force Wipe</p>
+        <h1 class="hero__title">До <span class="accent">вайпа</span> осталось</h1>
+
+        <!-- Живой таймер: дни/часы/минуты/секунды -->
+        <div class="countdown tabular" role="timer" aria-live="off" id="countdown">
+          <div class="count-unit"><div class="count-unit__num" id="cd-days">--</div><div class="count-unit__label">дней</div></div>
+          <div class="count-unit"><div class="count-unit__num" id="cd-hours">--</div><div class="count-unit__label">часов</div></div>
+          <div class="count-unit"><div class="count-unit__num" id="cd-mins">--</div><div class="count-unit__label">минут</div></div>
+          <div class="count-unit"><div class="count-unit__num" id="cd-secs">--</div><div class="count-unit__label">секунд</div></div>
+        </div>
+
+        <!-- Состояние «вайп идёт» -->
+        <div class="wipe-live" id="wipe-live">WIPE IS LIVE</div>
+
+        <!-- Дата следующего вайпа: локально + UTC -->
+        <div class="wipe-meta">
+          <div class="card">
+            <div class="k">Ваш часовой пояс <span id="tz-name"></span></div>
+            <div class="v" id="wipe-local">—</div>
+          </div>
+          <div class="card">
+            <div class="k">UTC</div>
+            <div class="v tabular" id="wipe-utc">—</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Таблица ближайших 6 вайпов -->
+      <div class="panel__head" style="margin-top: var(--space-2xl)">
+        <h2>Ближайшие <span class="accent">вайпы</span></h2>
+        <p class="panel__lead">Force wipe — первый четверг каждого месяца, 19:00 UTC. Время ниже — в вашем часовом поясе.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <caption>Расписание ближайших force wipe (локальное время).</caption>
+          <thead>
+            <tr><th scope="col">#</th><th scope="col">Дата (локально)</th><th scope="col">Время (локально)</th><th scope="col">UTC</th><th scope="col">Осталось</th></tr>
+          </thead>
+          <tbody id="wipe-table"><!-- заполняется из script.js --></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ 2. РЕСУРСЫ И БИОМЫ ============ -->
+    <section class="panel" id="panel-resources" role="tabpanel" aria-labelledby="tab-resources" tabindex="0" hidden>
+      <div class="panel__head">
+        <h2>Ресурсы и <span class="accent">биомы</span></h2>
+        <p class="panel__lead">Где что фармить и чем отличаются биомы. Руда (камень/металл/сера) есть во всех биомах — разница в климате, еде и опасностях.</p>
+      </div>
+
+      <div class="disclaimer" role="note">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/></svg>
+        <span>Игровые данные вынесены в <code>data.js</code> — их легко проверить и поправить в одном месте.</span>
+      </div>
+
+      <h3>Биомы</h3>
+      <div class="grid grid--auto" id="biomes-grid"><!-- карточки биомов --></div>
+
+      <h3 style="margin-top: var(--space-2xl)">Ресурсы: где искать</h3>
+      <div class="table-wrap">
+        <table>
+          <caption>Ключевые ресурсы и способы добычи.</caption>
+          <thead>
+            <tr><th scope="col">Ресурс</th><th scope="col">Как добыть</th><th scope="col">Где искать</th><th scope="col">Совет</th></tr>
+          </thead>
+          <tbody id="resources-table"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ 3. МОНУМЕНТЫ ============ -->
+    <section class="panel" id="panel-monuments" role="tabpanel" aria-labelledby="tab-monuments" tabindex="0" hidden>
+      <div class="panel__head">
+        <h2><span class="accent">Монументы</span></h2>
+        <p class="panel__lead">Уровень сложности, радиация, нужные карты доступа и лут. Фильтруйте по сложности.</p>
+      </div>
+
+      <!-- Фильтр по сложности (tier) -->
+      <div class="filter" role="group" aria-label="Фильтр монументов по сложности" style="display:flex; gap:var(--space-sm); flex-wrap:wrap; margin-bottom:var(--space-lg)">
+        <button class="btn btn-ghost" data-tier="all" aria-pressed="true">Все</button>
+        <button class="btn btn-ghost" data-tier="0" aria-pressed="false">Сейф-зоны</button>
+        <button class="btn btn-ghost" data-tier="1" aria-pressed="false">Tier 1 · зелёные</button>
+        <button class="btn btn-ghost" data-tier="2" aria-pressed="false">Tier 2 · синие</button>
+        <button class="btn btn-ghost" data-tier="3" aria-pressed="false">Tier 3 · красные</button>
+      </div>
+
+      <div class="grid grid--auto" id="monuments-grid"></div>
+    </section>
+
+    <!-- ============ 4. СЕРВЕРЫ (живой список) ============ -->
+    <section class="panel" id="panel-servers" role="tabpanel" aria-labelledby="tab-servers" tabindex="0" hidden>
+      <div class="panel__head">
+        <h2>Живой список <span class="accent">серверов</span></h2>
+        <p class="panel__lead">Реальные серверы Rust в реальном времени: население, регион, тип и дата вайпа. Данные подтягиваются из BattleMetrics при открытии вкладки.</p>
+      </div>
+
+      <div class="disclaimer" role="note">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/></svg>
+        <span>Источник — публичный <a href="https://www.battlemetrics.com/servers/rust" target="_blank" rel="noopener">BattleMetrics API</a>. Показываются онлайн-серверы; фильтр по типу применяется к загруженной выборке (топ по игрокам).</span>
+      </div>
+
+      <!-- Фильтры живого списка -->
+      <div class="server-filters" role="group" aria-label="Фильтры списка серверов">
+        <div class="field">
+          <label for="sv-search">Поиск по названию</label>
+          <input class="input" id="sv-search" type="search" placeholder="напр. Rustafied, Duo, EU…" />
+        </div>
+        <div class="field">
+          <label for="sv-region">Регион</label>
+          <select class="input" id="sv-region">
+            <option value="">Все</option>
+            <option value="US">США (US)</option>
+            <option value="DE">Германия (DE)</option>
+            <option value="GB">Великобритания (GB)</option>
+            <option value="FR">Франция (FR)</option>
+            <option value="RU">Россия (RU)</option>
+            <option value="AU">Австралия (AU)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="sv-type">Тип</label>
+          <select class="input" id="sv-type">
+            <option value="all">Любой</option>
+            <option value="official">Официальные</option>
+            <option value="community">Комьюнити</option>
+            <option value="modded">Модовые</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="sv-sort">Сортировка</label>
+          <select class="input" id="sv-sort">
+            <option value="-players">По игрокам</option>
+            <option value="rank">По рангу</option>
+          </select>
+        </div>
+        <div class="field" style="justify-content:flex-end">
+          <label aria-hidden="true">&nbsp;</label>
+          <button class="btn btn-primary" id="sv-refresh" type="button">Обновить</button>
+        </div>
+      </div>
+
+      <!-- Статус загрузки / ошибки (для скринридера) -->
+      <div id="sv-status" role="status" aria-live="polite" style="color:var(--color-fg-muted); margin-bottom:var(--space-md)"></div>
+
+      <div class="table-wrap">
+        <table>
+          <caption>Онлайн-серверы Rust (BattleMetrics). Клик по названию — страница сервера.</caption>
+          <thead>
+            <tr>
+              <th scope="col">#</th>
+              <th scope="col">Название</th>
+              <th scope="col">Игроки</th>
+              <th scope="col">Регион</th>
+              <th scope="col">Тип</th>
+              <th scope="col">Последний вайп</th>
+            </tr>
+          </thead>
+          <tbody id="sv-tbody"></tbody>
+        </table>
+      </div>
+
+      <!-- Справка: типы серверов (из data.js) -->
+      <div class="panel__head" style="margin-top: var(--space-3xl)">
+        <h2>Справка: <span class="accent">типы</span> серверов</h2>
+        <p class="panel__lead">Что означают тип, режим, лимит группы и частота вайпа — чтобы понимать фильтры выше.</p>
+      </div>
+      <div class="disclaimer" role="note">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/></svg>
+        <span>Справочник вынесен в <code>data.js</code> (объект <code>SERVERS</code>) — легко дополнить.</span>
+      </div>
+      <div id="servers-root"></div>
+    </section>
+
+    <!-- ============ 5. 3D-КАРТА ============ -->
+    <section class="panel" id="panel-map" role="tabpanel" aria-labelledby="tab-map" tabindex="0" hidden>
+      <div class="panel__head">
+        <h2>3D-<span class="accent">карта</span> острова</h2>
+        <p class="panel__lead">Стилизованный 3D-рельеф. Вращайте мышью/пальцем, зум колесом/щипком (OrbitControls). Это визуальная заглушка — ниже описано, как подключить реальную карту по сиду.</p>
+      </div>
+
+      <div class="map-stage" id="map-stage">
+        <!-- Fallback, если WebGL недоступен -->
+        <div class="map-fallback" id="map-fallback">
+          <div>
+            <p><strong>3D-карта недоступна.</strong></p>
+            <p>Ваш браузер не поддерживает WebGL или он отключён.</p>
+          </div>
+        </div>
+        <div class="map-hint" id="map-hint">Загрузка 3D-сцены…</div>
+      </div>
+    </section>
+
+    <!-- ============ 6. КАЛЬКУЛЯТОРЫ ============ -->
+    <section class="panel" id="panel-calc" role="tabpanel" aria-labelledby="tab-calc" tabindex="0" hidden>
+      <div class="panel__head">
+        <h2><span class="accent">Калькуляторы</span></h2>
+        <p class="panel__lead">Рейд (сера/взрывчатка на постройки) и апкип (расход ресурсов на Tool Cupboard). Данные редактируются в объекте внутри <code>script.js</code>.</p>
+      </div>
+
+      <div class="disclaimer" role="note">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/></svg>
+        <span>Цифры расхода — примерные (баланс Rust меняется). Проверьте перед вайпом и поправьте объект <code>RAID_DATA</code> / <code>UPKEEP_DATA</code>.</span>
+      </div>
+
+      <div class="grid grid--2">
+        <!-- Калькулятор рейда -->
+        <div class="card">
+          <h3>Калькулятор рейда</h3>
+          <div class="field">
+            <label for="raid-target">Что ломаем</label>
+            <select class="input" id="raid-target"></select>
+            <span class="hint" id="raid-hp"></span>
+          </div>
+          <div class="field">
+            <label for="raid-tool">Чем</label>
+            <select class="input" id="raid-tool"></select>
+          </div>
+          <div class="field">
+            <label for="raid-count">Сколько объектов</label>
+            <input class="input tabular" id="raid-count" type="number" inputmode="numeric" min="1" value="1" />
+          </div>
+          <div class="calc-result" id="raid-result" aria-live="polite"></div>
+        </div>
+
+        <!-- Калькулятор апкипа -->
+        <div class="card">
+          <h3>Калькулятор апкипа (в сутки)</h3>
+          <p class="hint" style="margin-top:0">Укажите, из чего построена база (кол-во «квадратов» стен/фундамента по материалу). Апкип — примерный расход в сутки на TC.</p>
+          <div class="field">
+            <label for="up-material">Материал</label>
+            <select class="input" id="up-material"></select>
+          </div>
+          <div class="field">
+            <label for="up-blocks">Кол-во построек (building blocks)</label>
+            <input class="input tabular" id="up-blocks" type="number" inputmode="numeric" min="1" value="20" />
+          </div>
+          <div class="calc-result" id="up-result" aria-live="polite"></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Кнопка атмосферного звука (процедурный Web Audio, без внешних файлов) -->
+  <button id="ambient-toggle" class="ambient-btn" type="button" aria-pressed="false" aria-label="Включить атмосферный звук">
+    <svg class="ambient-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M11 5 6 9H2v6h4l5 4z"/><path class="wave" d="M15.5 8.5a5 5 0 0 1 0 7M19 5a9 9 0 0 1 0 14"/>
+    </svg>
+    <span class="ambient-label">Атмосфера</span>
+  </button>
+
+  <footer class="footer">
+    <div class="container">
+      <p>Rust Wipe Hub — неофициальный фанатский справочник. Rust © Facepunch Studios. Данные примерны и могут меняться с патчами.</p>
+    </div>
+  </footer>
+
+  <!-- Данные ПЕРЕД логикой -->
+  <script src="data.js"></script>
+  <!-- Логика приложения (модуль — нужен для import Three.js) -->
+  <script type="module" src="script.js"></script>
+</body>
+</html>
