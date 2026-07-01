@@ -369,6 +369,27 @@ td strong { color: var(--color-fg); }
 }
 .disclaimer svg { color: var(--color-secondary); flex: 0 0 auto; margin-top: 2px; }
 
+/* ---------- ФИЛЬТРЫ ЖИВОГО СПИСКА СЕРВЕРОВ ---------- */
+.server-filters {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr auto;
+  gap: var(--space-md);
+  align-items: end;
+  margin-bottom: var(--space-lg);
+}
+.server-filters .field { margin-bottom: 0; }
+/* Значок «живого» статуса рядом с типом в таблице */
+.sv-name { color: var(--color-fg); font-weight: 500; }
+.sv-name:hover { color: var(--color-primary); }
+
+@media (max-width: 900px) {
+  .server-filters { grid-template-columns: 1fr 1fr; }
+  .server-filters .field:first-child { grid-column: 1 / -1; }
+}
+@media (max-width: 640px) {
+  .server-filters { grid-template-columns: 1fr; }
+}
+
 /* ---------- ПОДВАЛ ---------- */
 .footer {
   border-top: 1px solid var(--color-border);

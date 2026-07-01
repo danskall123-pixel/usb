@@ -21,7 +21,8 @@
 ============================================================================= */
 const tabs = Array.from(document.querySelectorAll('.tab'));
 const panels = Array.from(document.querySelectorAll('.panel'));
-let mapInitialized = false; // 3D-сцену инициализируем лениво — при первом открытии
+let mapInitialized = false;     // 3D-сцену инициализируем лениво — при первом открытии
+let serversLoaded = false;      // живой список серверов грузим при первом открытии вкладки
 
 function activateTab(name, { focus = false, updateHash = true } = {}) {
   tabs.forEach((tab) => {
@@ -42,6 +43,12 @@ function activateTab(name, { focus = false, updateHash = true } = {}) {
   if (name === 'map' && !mapInitialized) {
     mapInitialized = true;
     initMap();
+  }
+
+  // Живой список серверов: запрос к API только при первом открытии вкладки
+  if (name === 'servers' && !serversLoaded) {
+    serversLoaded = true;
+    loadLiveServers();
   }
 }
 
@@ -321,6 +328,133 @@ function renderServers() {
       <div class="grid grid--auto">${cards}</div>`;
   }).join('');
 }
+
+/* =============================================================================
+   4b. ЖИВОЙ СПИСОК СЕРВЕРОВ (BattleMetrics API)
+   Публичный API, CORS разрешён (можно звать прямо из браузера, без ключа).
+============================================================================= */
+const BM_TYPE_META = {
+  official:  { label: 'Официальный', cls: 'badge--green' },
+  community: { label: 'Комьюнити',   cls: 'badge--blue' },
+  modded:    { label: 'Модовый',     cls: 'badge--red' },
+};
+
+// Безопасное экранирование — имена серверов могут содержать < > & " и т.п.
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// «X дней назад» / «сегодня» для даты вайпа
+function wipeAgo(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return '—';
+  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  const date = new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit' }).format(d);
+  if (days <= 0) return `${date} (сегодня)`;
+  if (days === 1) return `${date} (вчера)`;
+  return `${date} (${days} дн назад)`;
+}
+
+async function loadLiveServers() {
+  const status = el('sv-status');
+  const tbody = el('sv-tbody');
+  if (!status || !tbody) return;
+
+  const search = el('sv-search').value.trim();
+  const country = el('sv-region').value;
+  const type = el('sv-type').value;
+  const sort = el('sv-sort').value;
+
+  status.textContent = 'Загрузка серверов…';
+  tbody.setAttribute('aria-busy', 'true');
+
+  // Собираем URL (скобки в filter[...] допустимы — API их принимает)
+  const url = new URL('https://api.battlemetrics.com/servers');
+  url.searchParams.set('filter[game]', 'rust');
+  url.searchParams.set('filter[status]', 'online');
+  url.searchParams.set('page[size]', '100');
+  url.searchParams.set('sort', sort);
+  if (search) url.searchParams.set('filter[search]', search);
+  if (country) url.searchParams.append('filter[countries][]', country);
+
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000); // не ждём вечно
+    const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: 'application/json' } });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+
+    const json = await res.json();
+    let list = (json.data || []).map((s) => {
+      const a = s.attributes || {};
+      const d = a.details || {};
+      return {
+        id: a.id,
+        name: a.name || '—',
+        players: a.players ?? 0,
+        max: a.maxPlayers ?? 0,
+        rank: a.rank,
+        country: a.country || '—',
+        type: d.rust_type || '',
+        wipe: d.rust_last_wipe,
+        url: d.rust_url || `https://www.battlemetrics.com/servers/rust/${s.id}`,
+      };
+    });
+
+    // Фильтр по типу применяем на клиенте (к загруженной выборке)
+    if (type !== 'all') list = list.filter((s) => s.type === type);
+    list = list.slice(0, 40); // не перегружаем таблицу
+
+    if (list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" style="color:var(--color-fg-muted)">Ничего не найдено. Смягчите фильтры и попробуйте снова.</td></tr>`;
+      status.textContent = 'Серверы не найдены.';
+      tbody.removeAttribute('aria-busy');
+      return;
+    }
+
+    tbody.innerHTML = list.map((s) => {
+      const t = BM_TYPE_META[s.type] || { label: s.type || '—', cls: 'badge--safe' };
+      return `
+        <tr>
+          <td class="tabular">${s.rank ?? '—'}</td>
+          <td><a class="sv-name" href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.name)}</a></td>
+          <td class="tabular">${s.players}/${s.max}</td>
+          <td>${escapeHtml(s.country)}</td>
+          <td><span class="badge ${t.cls}"><span class="dot" aria-hidden="true"></span>${t.label}</span></td>
+          <td class="tabular">${wipeAgo(s.wipe)}</td>
+        </tr>`;
+    }).join('');
+
+    const now = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(new Date());
+    status.textContent = `Показано ${list.length} серверов · обновлено в ${now}`;
+    tbody.removeAttribute('aria-busy');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--color-fg-muted)">Не удалось загрузить список (${escapeHtml(err.message)}). Проверьте интернет или откройте <a href="https://www.battlemetrics.com/servers/rust" target="_blank" rel="noopener">список на BattleMetrics</a>.</td></tr>`;
+    status.textContent = 'Ошибка загрузки серверов.';
+    tbody.removeAttribute('aria-busy');
+  }
+}
+
+// Управление фильтрами живого списка
+(function wireServerFilters() {
+  const refresh = el('sv-refresh');
+  if (!refresh) return;
+  refresh.addEventListener('click', loadLiveServers);
+  ['sv-region', 'sv-type', 'sv-sort'].forEach((id) => {
+    const node = el(id);
+    if (node) node.addEventListener('change', loadLiveServers);
+  });
+  // Поиск: Enter сразу, ввод — с задержкой (debounce), чтобы не спамить API
+  const searchInput = el('sv-search');
+  if (searchInput) {
+    let deb;
+    searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); loadLiveServers(); } });
+    searchInput.addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(loadLiveServers, 600); });
+  }
+})();
 
 /* =============================================================================
    5. 3D-КАРТА ОСТРОВА (Three.js + OrbitControls)

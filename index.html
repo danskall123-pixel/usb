@@ -173,19 +173,87 @@
       <div class="grid grid--auto" id="monuments-grid"></div>
     </section>
 
-    <!-- ============ 4. СЕРВЕРЫ ============ -->
+    <!-- ============ 4. СЕРВЕРЫ (живой список) ============ -->
     <section class="panel" id="panel-servers" role="tabpanel" aria-labelledby="tab-servers" tabindex="0" hidden>
       <div class="panel__head">
-        <h2>Типы <span class="accent">серверов</span> Rust</h2>
-        <p class="panel__lead">Из чего выбирать при заходе: тип сервера, режим геймплея, лимит группы и частота вайпов. При выборе всегда читай описание конкретного сервера.</p>
+        <h2>Живой список <span class="accent">серверов</span></h2>
+        <p class="panel__lead">Реальные серверы Rust в реальном времени: население, регион, тип и дата вайпа. Данные подтягиваются из BattleMetrics при открытии вкладки.</p>
       </div>
 
       <div class="disclaimer" role="note">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/></svg>
-        <span>Список типов вынесен в <code>data.js</code> (объект <code>SERVERS</code>) — легко дополнить или поправить.</span>
+        <span>Источник — публичный <a href="https://www.battlemetrics.com/servers/rust" target="_blank" rel="noopener">BattleMetrics API</a>. Показываются онлайн-серверы; фильтр по типу применяется к загруженной выборке (топ по игрокам).</span>
       </div>
 
-      <!-- Секции серверов рендерятся из data.js -->
+      <!-- Фильтры живого списка -->
+      <div class="server-filters" role="group" aria-label="Фильтры списка серверов">
+        <div class="field">
+          <label for="sv-search">Поиск по названию</label>
+          <input class="input" id="sv-search" type="search" placeholder="напр. Rustafied, Duo, EU…" />
+        </div>
+        <div class="field">
+          <label for="sv-region">Регион</label>
+          <select class="input" id="sv-region">
+            <option value="">Все</option>
+            <option value="US">США (US)</option>
+            <option value="DE">Германия (DE)</option>
+            <option value="GB">Великобритания (GB)</option>
+            <option value="FR">Франция (FR)</option>
+            <option value="RU">Россия (RU)</option>
+            <option value="AU">Австралия (AU)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="sv-type">Тип</label>
+          <select class="input" id="sv-type">
+            <option value="all">Любой</option>
+            <option value="official">Официальные</option>
+            <option value="community">Комьюнити</option>
+            <option value="modded">Модовые</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="sv-sort">Сортировка</label>
+          <select class="input" id="sv-sort">
+            <option value="-players">По игрокам</option>
+            <option value="rank">По рангу</option>
+          </select>
+        </div>
+        <div class="field" style="justify-content:flex-end">
+          <label aria-hidden="true">&nbsp;</label>
+          <button class="btn btn-primary" id="sv-refresh" type="button">Обновить</button>
+        </div>
+      </div>
+
+      <!-- Статус загрузки / ошибки (для скринридера) -->
+      <div id="sv-status" role="status" aria-live="polite" style="color:var(--color-fg-muted); margin-bottom:var(--space-md)"></div>
+
+      <div class="table-wrap">
+        <table>
+          <caption>Онлайн-серверы Rust (BattleMetrics). Клик по названию — страница сервера.</caption>
+          <thead>
+            <tr>
+              <th scope="col">#</th>
+              <th scope="col">Название</th>
+              <th scope="col">Игроки</th>
+              <th scope="col">Регион</th>
+              <th scope="col">Тип</th>
+              <th scope="col">Последний вайп</th>
+            </tr>
+          </thead>
+          <tbody id="sv-tbody"></tbody>
+        </table>
+      </div>
+
+      <!-- Справка: типы серверов (из data.js) -->
+      <div class="panel__head" style="margin-top: var(--space-3xl)">
+        <h2>Справка: <span class="accent">типы</span> серверов</h2>
+        <p class="panel__lead">Что означают тип, режим, лимит группы и частота вайпа — чтобы понимать фильтры выше.</p>
+      </div>
+      <div class="disclaimer" role="note">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/></svg>
+        <span>Справочник вынесен в <code>data.js</code> (объект <code>SERVERS</code>) — легко дополнить.</span>
+      </div>
       <div id="servers-root"></div>
     </section>
 
