@@ -2,9 +2,10 @@
 // Тело: позвоночник + профиль толщины + список частей. Всё из seed.
 
 import { Spine, Profile } from './spine.js';
-import { creaturePalette } from './palette.js';
+import { creaturePalette, buildPalette } from './palette.js';
 import { createPart, updatePart, PART } from './parts.js';
 import { makeRng, clamp, lerp, lerpAngle, damp, TAU } from './rng.js';
+import { computeStats } from './stats.js';
 
 /**
  * Конфигурация тела — это и есть «геном»: то, что сохраняется и правится в редакторе.
@@ -109,34 +110,87 @@ export function buildBody(cfg, x = 0, y = 0, angle = 0) {
 }
 
 /** Пересоздать части тела из конфигурации (после правок в редакторе). */
-export function rebuildParts(body) {
-  body.parts = body.cfg.parts.map((p, i) => createPart(p.type, { ...p, seed: body.seed + i * 37 }));
-  body.profile = new Profile(body.cfg.profile);
-  body.halfWidth = body.cfg.halfWidth;
+export function rebuildParts(body, cfg = body.cfg) {
+  body.cfg = cfg;
+  body.parts = cfg.parts.map((p, i) => createPart(p.type, { ...p, seed: body.seed + i * 37 }));
+  body.profile = new Profile(cfg.profile);
 }
 
 export class Player {
   constructor(cfg, x, y) {
+    this.cfg = cfg;
     this.body = buildBody(cfg, x, y, 0);
+    this.stats = computeStats(cfg);
     this.x = x; this.y = y;
     this.px = x; this.py = y;
     this.angle = 0;
     this.speed = 0;
-    this.maxSpeed = 118;
-    this.turnRate = 5.2;
     this.stamina = 1;
     this.boosting = false;
-    this.hp = 1; this.maxHp = 1;
+    this.hp = this.stats.maxHp;
     this.invuln = 0;
     this.dead = false;
+    this.dyingT = -1;
     this.shakeT = 0;
     this.time = 0;
+    this.attackCd = 0;
+    this.dna = 0;
+    this.growth = 0;        // прогресс до следующего уровня, 0..1
+    this.level = 1;
+    this.morph = null;      // анимация эволюции
+  }
+
+  get maxHp() { return this.stats.maxHp; }
+  get mass() { return this.stats.mass; }
+  get maxSpeed() { return this.stats.speed * 1.45; }
+  get turnRate() { return this.stats.turn; }
+
+  /** Точка рта в мире. */
+  mouthAt(out) { this.body.spine.sample(0.03, out); return out; }
+
+  /** Открыть рот (при укусе и поедании) — рисовалка сама отработает деформацию. */
+  openMouth() {
+    for (const p of this.body.parts) {
+      if (p.type.startsWith('mouth')) p.open = 1;
+    }
+  }
+
+  /**
+   * Эволюция: тело плавно интерполируется из старой конфигурации в новую.
+   * Части появляются сразу, но с пружинкой.
+   */
+  applyConfig(cfg, morphTime = 1.2) {
+    const from = {
+      halfWidth: this.body.halfWidth,
+      segLen: this.cfg.segLen,
+      profile: Array.from(this.body.profile.p),
+    };
+    this.cfg = cfg;
+    this.stats = computeStats(cfg);
+    this.hp = Math.min(this.hp + 1, this.stats.maxHp);
+    rebuildParts(this.body, cfg);
+    for (const p of this.body.parts) { p.spring = -0.45; p.springV = 0; }
+    this.morph = { t: 0, dur: morphTime, from, to: { halfWidth: cfg.halfWidth, segLen: cfg.segLen, profile: cfg.profile.slice() } };
   }
 
   /** Физический шаг (фиксированный dt). target — точка в мировых координатах. */
   update(dt, target, wantBoost) {
     this.time += dt;
     const b = this.body;
+    if (this.attackCd > 0) this.attackCd -= dt;
+
+    // Плавное превращение тела при эволюции.
+    if (this.morph) {
+      const m = this.morph;
+      m.t = Math.min(1, m.t + dt / m.dur);
+      const k = m.t * m.t * (3 - 2 * m.t);
+      b.halfWidth = lerp(m.from.halfWidth, m.to.halfWidth, k);
+      const pf = b.profile.p;
+      for (let i = 0; i < pf.length; i++) {
+        pf[i] = lerp(m.from.profile[i] ?? 1, m.to.profile[i] ?? 1, k);
+      }
+      if (m.t >= 1) this.morph = null;
+    }
 
     // --- Выносливость и ускорение ---
     this.boosting = !!wantBoost && this.stamina > 0.02 && !this.dead;
@@ -194,7 +248,7 @@ export class Player {
   /** Урон: вспышка, сжатие, дрожь, кратковременная потеря контроля. */
   hurt(amount) {
     if (this.invuln > 0 || this.dead) return false;
-    this.hp = Math.max(0, this.hp - amount);
+    this.hp = Math.max(0, this.hp - Math.max(0.2, amount - this.stats.def * 0.1));
     this.invuln = 0.8;
     this.body.flash = 1;
     this.body.squash = 0.72;
@@ -205,8 +259,26 @@ export class Player {
   }
 
   die() {
+    if (this.dead) return;
     this.dead = true;
-    this.body.dying = 0;
+    this.dyingT = 0;
+  }
+
+  /** Анимация смерти игрока: тело обмякает, теряет цвет и всплывает. */
+  updateDying(dt) {
+    this.dyingT += dt;
+    const b = this.body, k = clamp(this.dyingT / 1.8, 0, 1);
+    b.spine.soft = k;
+    b.spine.relax = lerp(0.94, 1, k);
+    b.alpha = 1 - k * 0.85;
+    const step = Math.round(k * 6);
+    if (step !== this._fadeStep) { this._fadeStep = step; b.pal = buildPalette(b.pal.params, step / 6); }
+    b.speed01 = 0;
+    this.speed = lerp(this.speed, 0, damp(2, dt));
+    this.y -= (12 + k * 22) * dt;
+    this.angle = lerpAngle(this.angle, -Math.PI / 2, damp(0.7, dt));
+    spineStep(b, this.x, this.y, this.angle, dt);
+    updateBodyParts(b, dt, this.time);
   }
 }
 

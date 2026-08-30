@@ -26,26 +26,41 @@ export function creaturePalette(seed) {
   const scheme = rng.pick(Object.keys(HARMONIES));
   const off = HARMONIES[scheme];
 
-  const h = rng.range(0, 360);
-  const s = rng.range(45, 88);
-  const l = rng.range(46, 66);
-  const accentH = h + off[1] * rng.range(0.6, 1);
-  const glowH = h + off[2] * rng.range(0.4, 1);
+  const params = {
+    scheme,
+    h: rng.range(0, 360),
+    s: rng.range(45, 88),
+    l: rng.range(46, 66),
+    ao: off[1] * rng.range(0.6, 1),
+    go: off[2] * rng.range(0.4, 1),
+  };
+  return buildPalette(params, 0);
+}
+
+/**
+ * Сборка палитры. fade 0..1 обесцвечивает и «гасит» цвет —
+ * так тело теряет цвет при смерти, без подмены картинок.
+ */
+export function buildPalette(params, fade = 0) {
+  const k = clamp(fade, 0, 1);
+  const h = params.h;
+  const s = params.s * (1 - k * 0.88);
+  const l = params.l + (44 - params.l) * k * 0.7;
+  const accentH = h + params.ao;
+  const glowH = h + params.go;
 
   return {
-    scheme,
-    h, s, l,
+    params, scheme: params.scheme, h, s, l,
     base: hsl(h, s, l),
     mid: hsl(h + 6, s * 0.9, l * 0.82),
     deep: hsl(h - 10, s * 0.8, l * 0.42),
     light: hsl(h + 14, s * 0.6, Math.min(92, l * 1.55)),
-    accent: hsl(accentH, s * 1.0, l * 1.05),
+    accent: hsl(accentH, s, l * 1.05),
     accentDeep: hsl(accentH - 8, s * 0.85, l * 0.6),
-    glow: hsl(glowH, 92, 72),
+    glow: hsl(glowH, 92 * (1 - k * 0.9), 72),
     ink: hsl(h - 6, s * 0.5, 14),
-    // Полупрозрачные варианты — заранее, чтобы не собирать строки в кадре.
     membrane: hsl(h + 10, s, Math.min(95, l * 1.5), 0.28),
-    rim: hsl(h + 20, 80, 88, 0.55),
+    rim: hsl(h + 20, 80 * (1 - k * 0.8), 88, 0.55),
     shadow: hsl(h - 20, 60, 8, 0.35),
   };
 }

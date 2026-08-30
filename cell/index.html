@@ -16,9 +16,16 @@
   <!-- HUD: обычный DOM поверх canvas, ни одной картинки -->
   <div id="hud">
     <div class="topbar">
-      <div id="fps" class="chip">— FPS</div>
-      <button id="reroll" class="chip btn">случайное существо</button>
+      <div class="stack">
+        <div class="bar hp"><i id="hpFill"></i></div>
+        <div class="bar stam"><i id="stamFill"></i></div>
+      </div>
+      <div class="chip dna"><span class="dot"></span><span id="dnaVal">0</span></div>
+      <div class="chip lvl">ур. <span id="levelVal">1</span></div>
+      <div id="fps" class="chip mono">— FPS</div>
+      <button id="reroll" class="chip btn">эволюция</button>
     </div>
+    <div class="growthWrap"><div class="bar growth"><i id="growthFill"></i></div></div>
     <div class="hint">Веди пальцем — тело изгибается за траекторией. Второй палец — ускорение.</div>
   </div>
 
