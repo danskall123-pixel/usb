@@ -20,7 +20,7 @@ class Food {
     this.wob = (seed % 100) / 100 * TAU;
     this.vx = 0; this.vy = 0;
     this.mass = r * 0.2;
-    this.value = meat ? r * 0.9 : r * 0.55;
+    this.value = meat ? r * 1.6 : r * 1.05;
     return this;
   }
 }
@@ -37,7 +37,7 @@ export class World {
     this.level = 1;
     this.worldRadius = 2600;
     this.maxCreatures = 16;
-    this.maxFood = 90;
+    this.maxFood = 130;
     this.onEat = null;        // (value, x, y, meat) => void
     this.onHit = null;        // (kind, x, y, power) => void
     this.time = 0;
@@ -54,7 +54,7 @@ export class World {
   /** Наполнение мира под текущий уровень роста. */
   populate(cx, cy) {
     for (let i = 0; i < this.maxFood; i++) {
-      const a = this.rng.range(0, TAU), d = this.rng.range(80, 1500);
+      const a = this.rng.range(0, TAU), d = this.rng.range(70, 1200);
       this._food().set(cx + Math.cos(a) * d, cy + Math.sin(a) * d,
         this.rng.range(5, 11), this.rng.chance(0.18), this.rng.int(0, 999));
     }
@@ -206,7 +206,7 @@ export class World {
     let aliveFood = 0;
     for (const f of this.foods) if (f.alive) aliveFood++;
     if (aliveFood < this.maxFood) {
-      const a = this.rng.range(0, TAU), d = this.rng.range(600, 1300);
+      const a = this.rng.range(0, TAU), d = this.rng.range(520, 1100);
       this._food().set(cam.x + Math.cos(a) * d, cam.y + Math.sin(a) * d,
         this.rng.range(5, 11), this.rng.chance(0.15), this.rng.int(0, 999));
     }

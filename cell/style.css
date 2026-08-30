@@ -176,6 +176,7 @@ h2{ font-size:22px; font-weight:700; letter-spacing:.04em; }
 .row{ display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-top:4px; }
 
 .hint{
-  position:absolute; bottom:calc(var(--safe-b) + 46px); left:0; right:0;
-  text-align:center; font-size:12px; opacity:.5;
+  align-self:center; text-align:center; font-size:12px; max-width:26em;
+  opacity:.55; animation:hintFade 10s ease-in forwards;
 }
+@keyframes hintFade{ 0%,55%{opacity:.55} 100%{opacity:0} }

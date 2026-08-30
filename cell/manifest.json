@@ -1,0 +1,13 @@
+{
+  "name": "Cell Drift — клеточная стадия",
+  "short_name": "Cell Drift",
+  "description": "Аркадный survival-эволюционный симулятор одноклеточного организма. Вся графика и звук генерируются кодом.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#04141a",
+  "theme_color": "#04141a",
+  "lang": "ru",
+  "categories": ["games"]
+}

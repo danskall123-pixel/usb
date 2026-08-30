@@ -134,6 +134,7 @@ export class Player {
     this.shakeT = 0;
     this.time = 0;
     this.attackCd = 0;
+    this.stun = 0;
     this.dna = 0;
     this.growth = 0;        // прогресс до следующего уровня, 0..1
     this.level = 1;
@@ -197,8 +198,10 @@ export class Player {
     if (this.boosting) this.stamina = Math.max(0, this.stamina - dt * 0.42);
     else this.stamina = Math.min(1, this.stamina + dt * 0.24);
 
+    if (this.stun > 0) this.stun -= dt;
+
     let desiredSpeed = 0;
-    if (target && !this.dead) {
+    if (target && !this.dead && this.stun <= 0) {
       const dx = target.x - this.x, dy = target.y - this.y;
       const dist = Math.hypot(dx, dy);
       // Скорость зависит от расстояния до пальца: близко — почти стоим.
@@ -253,6 +256,7 @@ export class Player {
     this.body.flash = 1;
     this.body.squash = 0.72;
     this.shakeT = 0.35;
+    this.stun = 0.22;          // на мгновение теряем управление
     this.speed *= 0.35;
     if (this.hp <= 0) this.die();
     return true;
