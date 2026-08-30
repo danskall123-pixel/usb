@@ -1,10 +1,15 @@
-/* style.css — весь интерфейс собран из градиентов и форм, картинок нет. */
+/* style.css — весь интерфейс собран из градиентов и форм.
+   Ни одного .png/.svg: иконки — псевдоэлементы и clip-path. */
 
 :root{
   --ink: hsl(186 40% 92%);
+  --dim: hsl(186 30% 74%);
   --panel: hsl(192 45% 8% / .55);
+  --panel-solid: hsl(194 46% 7% / .92);
   --edge: hsl(186 60% 70% / .22);
   --accent: hsl(160 80% 58%);
+  --accent2: hsl(186 90% 66%);
+  --danger: hsl(2 85% 62%);
   --safe-t: env(safe-area-inset-top, 0px);
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-l: env(safe-area-inset-left, 0px);
@@ -27,21 +32,32 @@ html, body{
   user-select:none; -webkit-user-select:none;
 }
 
-#game{
-  position:fixed; inset:0;
-  display:block;
-  touch-action:none;
-}
+#game{ position:fixed; inset:0; display:block; touch-action:none; }
 
+/* ---------- HUD ---------- */
 #hud{
   position:fixed; inset:0;
   pointer-events:none;
   padding: calc(var(--safe-t) + 10px) calc(var(--safe-r) + 12px)
-           calc(var(--safe-b) + 12px) calc(var(--safe-l) + 12px);
+           calc(var(--safe-b) + 10px) calc(var(--safe-l) + 12px);
   display:flex; flex-direction:column; justify-content:space-between;
+  transition:opacity .35s ease, transform .35s ease;
 }
+#hud.dim{ opacity:0; transform:scale(.98); pointer-events:none; }
+#hud.dim *{ pointer-events:none !important; }
 
 .topbar{ display:flex; gap:8px; align-items:center; }
+.spacer{ flex:1; }
+.stack{ display:flex; flex-direction:column; gap:4px; flex:0 0 112px; }
+
+.midrow{ display:flex; align-items:flex-end; justify-content:space-between; }
+#minimap{
+  width:56px; height:56px; border-radius:50%;
+  opacity:.75;
+  border:1px solid var(--edge);
+  backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+}
+.bottom{ display:flex; flex-direction:column; gap:8px; align-items:center; }
 
 .chip{
   pointer-events:auto;
@@ -49,27 +65,49 @@ html, body{
   padding:7px 12px;
   border-radius:999px;
   color:var(--ink);
-  background:
-    linear-gradient(hsl(186 60% 80% / .10), hsl(186 60% 40% / .04)),
-    var(--panel);
+  background:linear-gradient(hsl(186 60% 80% / .10), hsl(186 60% 40% / .04)), var(--panel);
   border:1px solid var(--edge);
   backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  transition:transform .12s ease, background .2s ease, color .2s ease;
+}
+.chip:active{ transform:scale(.94); }
+.chip.on{ color:var(--accent); border-color:hsl(160 80% 58% / .5); }
+.btn{ font-weight:700; color:var(--accent); }
+.mono{ font-variant-numeric:tabular-nums; opacity:.55; }
+.lvl{ opacity:.85; }
+.dna{ display:flex; align-items:center; gap:6px; font-variant-numeric:tabular-nums; }
+.dna .dot{
+  width:10px; height:10px; border-radius:50%;
+  background:
+    radial-gradient(circle at 30% 30%, hsl(160 90% 70%), hsl(160 80% 40%) 60%, transparent 62%),
+    radial-gradient(circle at 72% 74%, hsl(186 90% 72%), hsl(186 80% 42%) 60%, transparent 62%);
 }
 
-.btn{ font-weight:600; color:var(--accent); }
-.btn:active{ transform:scale(.96); }
-
-.hint{
-  align-self:center;
-  max-width:26em; text-align:center;
-  font-size:12px; opacity:.55;
-  animation: fade 9s ease-in forwards;
+/* Иконки — фигуры, а не файлы */
+.icon-btn{ width:34px; height:34px; padding:0; display:grid; place-items:center; }
+.ic-pause{ width:10px; height:12px; border-left:3px solid var(--ink); border-right:3px solid var(--ink); }
+.ic-bolt{
+  width:14px; height:20px; background:var(--accent2);
+  clip-path:polygon(58% 0, 12% 56%, 44% 56%, 34% 100%, 88% 40%, 54% 40%);
 }
 
-@keyframes fade{ 0%,55%{opacity:.55} 100%{opacity:0} }
-
-/* --- Полоски и индикаторы: чистый CSS, ни одной картинки --- */
-.stack{ display:flex; flex-direction:column; gap:4px; flex:0 0 118px; }
+.skill{
+  pointer-events:auto;
+  position:relative; width:64px; height:64px; border-radius:50%;
+  display:grid; place-items:center;
+  border:1px solid var(--edge);
+  background:radial-gradient(circle at 35% 30%, hsl(186 70% 40% / .35), hsl(196 50% 10% / .8));
+  backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+}
+.skill:active{ transform:scale(.94); }
+/* Круговой индикатор кулдауна — conic-gradient, обновляется из JS */
+#skillRing{
+  position:absolute; inset:-3px; border-radius:50%;
+  background:conic-gradient(var(--accent2) calc(var(--cd, 0) * 1turn), transparent 0);
+  -webkit-mask:radial-gradient(circle, transparent 62%, #000 64%);
+  mask:radial-gradient(circle, transparent 62%, #000 64%);
+  opacity:.85;
+}
 
 .bar{
   height:9px; border-radius:999px; overflow:hidden;
@@ -78,23 +116,66 @@ html, body{
   box-shadow: inset 0 1px 2px hsl(0 0% 0% / .5);
 }
 .bar i{ display:block; height:100%; width:100%; border-radius:999px; transition:width .18s ease-out; }
-
 .hp i{ background:linear-gradient(90deg, hsl(348 85% 52%), hsl(8 90% 62%)); }
 .stam{ height:5px; }
 .stam i{ background:linear-gradient(90deg, hsl(48 90% 55%), hsl(38 95% 62%)); }
-
-.growthWrap{ position:absolute; left:0; right:0; bottom:calc(var(--safe-b) + 10px); padding:0 16px; }
+.growthWrap{ width:100%; padding:0 4px; }
 .growth{ height:6px; }
-.growth i{ background:linear-gradient(90deg, hsl(160 80% 45%), hsl(186 90% 62%)); width:0%; }
+.growth i{ width:0%; background:linear-gradient(90deg, hsl(160 80% 45%), hsl(186 90% 62%)); }
 
-.dna{ display:flex; align-items:center; gap:6px; font-variant-numeric:tabular-nums; }
-/* «Иконка» ДНК — две точки на градиенте, нарисованные CSS */
-.dna .dot{
-  width:10px; height:10px; border-radius:50%;
-  background:
-    radial-gradient(circle at 30% 30%, hsl(160 90% 70%), hsl(160 80% 40%) 60%, transparent 62%),
-    radial-gradient(circle at 72% 74%, hsl(186 90% 72%), hsl(186 80% 42%) 60%, transparent 62%);
+/* ---------- Экраны ---------- */
+#screens{ position:fixed; inset:0; pointer-events:none; }
+
+.screen{
+  position:absolute; inset:0;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:14px;
+  padding: calc(var(--safe-t) + 20px) calc(var(--safe-r) + 20px)
+           calc(var(--safe-b) + 24px) calc(var(--safe-l) + 20px);
+  background:radial-gradient(120% 80% at 50% 40%, hsl(194 50% 8% / .55), hsl(196 60% 4% / .85));
+  opacity:0; transform:scale(1.04);
+  visibility:hidden;
+  transition:opacity .32s ease, transform .32s cubic-bezier(.2,.8,.3,1), visibility 0s linear .32s;
+  pointer-events:none;
+  backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
 }
-.mono{ font-variant-numeric:tabular-nums; opacity:.6; }
-.lvl{ opacity:.85; }
-.topbar{ flex-wrap:wrap; }
+.screen.show{ opacity:1; transform:scale(1); pointer-events:auto; visibility:visible; transition-delay:0s; }
+
+/* Редактор: только верхняя панель, мир под ней виден */
+#editorUI{
+  justify-content:flex-start; background:none; backdrop-filter:none; -webkit-backdrop-filter:none;
+}
+.edTop{ display:flex; gap:6px; align-items:center; width:100%; flex-wrap:wrap; }
+
+#logo{ width:190px; height:120px; }
+h1{
+  font-size:34px; font-weight:800; letter-spacing:.22em;
+  background:linear-gradient(90deg, var(--accent), var(--accent2));
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+}
+h2{ font-size:22px; font-weight:700; letter-spacing:.04em; }
+.sub{ font-size:13px; opacity:.62; letter-spacing:.03em; }
+
+.menuBtns{ display:flex; flex-direction:column; gap:10px; width:min(300px, 78vw); margin-top:6px; }
+.big{
+  pointer-events:auto;
+  padding:14px 18px; border-radius:16px;
+  font-size:15px; font-weight:600; color:var(--ink);
+  background:linear-gradient(hsl(186 60% 80% / .10), hsl(186 60% 40% / .04)), var(--panel-solid);
+  border:1px solid var(--edge);
+  transition:transform .12s ease, border-color .2s ease;
+}
+.big:active{ transform:scale(.97); }
+.big.primary{
+  color:hsl(196 60% 8%);
+  background:linear-gradient(135deg, var(--accent), var(--accent2));
+  border-color:transparent;
+  font-weight:700;
+}
+.big[disabled]{ opacity:.35; }
+.row{ display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-top:4px; }
+
+.hint{
+  position:absolute; bottom:calc(var(--safe-b) + 46px); left:0; right:0;
+  text-align:center; font-size:12px; opacity:.5;
+}
