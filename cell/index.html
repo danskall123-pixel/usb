@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#04141a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Cell Drift</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- HUD: обычный DOM поверх canvas, ни одной картинки -->
+  <div id="hud">
+    <div class="topbar">
+      <div id="fps" class="chip">— FPS</div>
+      <button id="reroll" class="chip btn">случайное существо</button>
+    </div>
+    <div class="hint">Веди пальцем — тело изгибается за траекторией. Второй палец — ускорение.</div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
