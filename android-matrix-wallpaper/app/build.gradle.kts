@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.matrixwallpaper"
         minSdk = 26          // Android 8.0+ (adaptive icons, все актуальные Pixel/GrapheneOS)
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     buildTypes {
