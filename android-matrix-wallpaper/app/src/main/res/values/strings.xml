@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Matrix Rain</string>
+    <string name="wallpaper_label">Matrix Rain</string>
+    <string name="wallpaper_description">Зелёный цифровой дождь. Живые обои.</string>
+    <string name="open_picker_hint">Откройте: Настройки → Обои → Живые обои → Matrix Rain</string>
+</resources>
