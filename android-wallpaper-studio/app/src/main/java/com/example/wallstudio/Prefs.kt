@@ -20,6 +20,12 @@ object Prefs {
     fun getColor(c: Context) = sp(c).getInt("color", 0xFF1EE66E.toInt())
     fun setColor(c: Context, v: Int) = sp(c).edit().putInt("color", v).apply()
 
+    fun getIntensity(c: Context) = sp(c).getInt("intensity", 70)
+    fun setIntensity(c: Context, v: Int) = sp(c).edit().putInt("intensity", v).apply()
+
+    fun getBg(c: Context) = sp(c).getInt("bg", 0xFF04070A.toInt())
+    fun setBg(c: Context, v: Int) = sp(c).edit().putInt("bg", v).apply()
+
     fun getVideoUri(c: Context): String? = sp(c).getString("videoUri", null)
     fun setVideoUri(c: Context, v: String?) = sp(c).edit().putString("videoUri", v).apply()
 }

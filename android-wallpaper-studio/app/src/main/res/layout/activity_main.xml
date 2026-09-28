@@ -30,36 +30,19 @@
             android:textColor="@color/textDim"
             android:textSize="13sp" />
 
-        <TextView
-            style="@style/SectionLabel"
-            android:text="@string/section_style" />
+        <TextView style="@style/SectionLabel" android:text="@string/section_style" />
 
-        <LinearLayout
+        <HorizontalScrollView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:scrollbars="none">
 
-            <Button
-                android:id="@+id/btnMatrix"
-                android:layout_width="0dp"
+            <LinearLayout
+                android:id="@+id/styleRow"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/style_matrix" />
-
-            <Button
-                android:id="@+id/btnStars"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/style_stars" />
-
-            <Button
-                android:id="@+id/btnAurora"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/style_aurora" />
-        </LinearLayout>
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
 
         <FrameLayout
             android:layout_width="match_parent"
@@ -73,49 +56,43 @@
                 android:layout_height="match_parent" />
         </FrameLayout>
 
-        <TextView
-            style="@style/SectionLabel"
-            android:text="@string/speed" />
+        <TextView style="@style/SectionLabel" android:text="@string/speed" />
+        <SeekBar android:id="@+id/seekSpeed"
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:max="100" />
 
-        <SeekBar
-            android:id="@+id/seekSpeed"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:max="100" />
+        <TextView style="@style/SectionLabel" android:text="@string/density" />
+        <SeekBar android:id="@+id/seekDensity"
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:max="100" />
 
-        <TextView
-            style="@style/SectionLabel"
-            android:text="@string/density" />
+        <TextView style="@style/SectionLabel" android:text="@string/intensity" />
+        <SeekBar android:id="@+id/seekIntensity"
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:max="100" />
 
-        <SeekBar
-            android:id="@+id/seekDensity"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:max="100" />
-
-        <TextView
-            style="@style/SectionLabel"
-            android:text="@string/section_color" />
-
+        <TextView style="@style/SectionLabel" android:text="@string/section_color" />
         <HorizontalScrollView
+            android:layout_width="match_parent" android:layout_height="wrap_content" android:scrollbars="none">
+            <LinearLayout android:id="@+id/colorRow"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:paddingTop="4dp" android:paddingBottom="4dp" />
+        </HorizontalScrollView>
+
+        <TextView style="@style/SectionLabel" android:text="@string/background" />
+        <LinearLayout android:id="@+id/bgRow"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:paddingTop="4dp" android:paddingBottom="4dp" />
+
+        <Button
+            android:id="@+id/btnRandom"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:scrollbars="none">
-
-            <LinearLayout
-                android:id="@+id/colorRow"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:paddingTop="4dp"
-                android:paddingBottom="4dp" />
-        </HorizontalScrollView>
+            android:layout_marginTop="14dp"
+            android:text="@string/random" />
 
         <Button
             android:id="@+id/btnApplyLive"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
+            android:layout_marginTop="6dp"
             android:backgroundTint="@color/accent"
             android:text="@string/apply_live"
             android:textColor="#08110A"
@@ -128,14 +105,18 @@
             android:layout_marginBottom="6dp"
             android:background="@color/divider" />
 
-        <TextView
-            style="@style/SectionLabel"
-            android:text="@string/section_media" />
+        <TextView style="@style/SectionLabel" android:text="@string/section_media" />
+
+        <TextView style="@style/SectionLabel" android:text="@string/photo_target" />
+        <LinearLayout android:id="@+id/targetRow"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" />
 
         <Button
             android:id="@+id/btnPhoto"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
             android:text="@string/photo" />
 
         <Button

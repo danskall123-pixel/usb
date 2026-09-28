@@ -78,21 +78,17 @@ class StudioWallpaperService : WallpaperService() {
             val styleName = Prefs.getStyle(ctx)
             val density = Prefs.getDensity(ctx)
             renderer.setSpeed(Prefs.getSpeed(ctx))
+            renderer.setIntensity(Prefs.getIntensity(ctx))
+            renderer.setBgInt(Prefs.getBg(ctx))
             renderer.setColorInt(Prefs.getColor(ctx))
             if (styleName != appliedStyle) {
-                renderer.changeStyle(styleOf(styleName))
+                renderer.changeStyle(WallpaperRenderer.styleFromName(styleName))
                 appliedStyle = styleName
             }
             if (density != appliedDensity) {
                 renderer.setDensity(density)
                 appliedDensity = density
             }
-        }
-
-        private fun styleOf(name: String): WallpaperRenderer.Style = when (name) {
-            "STARFIELD" -> WallpaperRenderer.Style.STARFIELD
-            "AURORA" -> WallpaperRenderer.Style.AURORA
-            else -> WallpaperRenderer.Style.MATRIX
         }
 
         private fun schedule() {

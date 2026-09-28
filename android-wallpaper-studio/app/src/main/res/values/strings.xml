@@ -23,4 +23,8 @@
     <string name="photo_fail">Не удалось установить фото</string>
     <string name="no_picker">Не найдено приложение для выбора файла</string>
     <string name="hint_live">Откройте: Настройки → Обои → Живые обои</string>
+    <string name="intensity">Яркость</string>
+    <string name="background">Фон</string>
+    <string name="random">🎲 Случайный стиль</string>
+    <string name="photo_target">Экран для фото</string>
 </resources>
