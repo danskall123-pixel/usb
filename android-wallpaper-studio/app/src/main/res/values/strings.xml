@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Обои Студия</string>
+    <string name="subtitle">Живые стили, фото и видео — свои обои для Android / GrapheneOS</string>
+    <string name="section_style">Стиль живых обоев</string>
+    <string name="section_tune">Настройка</string>
+    <string name="section_color">Цвет</string>
+    <string name="section_media">Свои медиа-обои</string>
+    <string name="style_matrix">Матрица</string>
+    <string name="style_stars">Звёзды</string>
+    <string name="style_aurora">Аврора</string>
+    <string name="speed">Скорость</string>
+    <string name="density">Плотность</string>
+    <string name="apply_live">Установить эти живые обои</string>
+    <string name="photo">Фото на обои</string>
+    <string name="video">Видео в живые обои</string>
+    <string name="hint">Живые обои рисуются только когда видимы и умеют снижать частоту кадров в энергосбережении.</string>
+
+    <string name="wallpaper_studio_desc">Настраиваемые живые обои: матрица, звёзды, аврора.</string>
+    <string name="wallpaper_video_desc">Ваше видео как зациклённые живые обои (без звука).</string>
+
+    <string name="photo_ok">Фото установлено как обои</string>
+    <string name="photo_fail">Не удалось установить фото</string>
+    <string name="no_picker">Не найдено приложение для выбора файла</string>
+    <string name="hint_live">Откройте: Настройки → Обои → Живые обои</string>
+</resources>
