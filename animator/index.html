@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Аниматор 2D</title>
+  <meta name="description" content="Браузерный редактор 2D-анимации: векторное рисование, кости с IK и гибкой привязкой, таймлайн с интерполяцией, луковая кожа, экспорт видео и GIF." />
+  <meta name="theme-color" content="#17181b" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="editor.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="menubar"></header>
+    <div id="optbar" role="toolbar" aria-label="Параметры инструмента"></div>
+    <div id="work">
+      <aside id="toolbox" role="toolbar" aria-label="Инструменты" aria-orientation="vertical"></aside>
+      <main id="viewport"></main>
+      <div id="side-split" class="vsplit" title="Потяните, чтобы изменить ширину"></div>
+      <aside id="side">
+        <section id="layers" class="panel"></section>
+        <section id="inspector" class="panel" aria-label="Свойства"></section>
+      </aside>
+    </div>
+    <div id="tl-split" class="hsplit" title="Потяните, чтобы изменить высоту таймлайна"></div>
+    <section id="timeline" aria-label="Таймлайн"></section>
+    <footer id="status"></footer>
+  </div>
+  <noscript>Для работы редактора нужен JavaScript.</noscript>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
