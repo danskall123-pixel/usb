@@ -8,6 +8,7 @@ import { Renderer, renderFrameTo, activeSwitchChild } from './render.js';
 import { encodeGIF } from './gif.js';
 import { dialog, numField, selectField, checkField } from './ui.js';
 import { snapshot } from './history.js';
+import { registry } from './ext.js';
 
 // ---------- IndexedDB ----------
 function idb() {
@@ -349,6 +350,9 @@ function svgFrame(f, transparent) {
       const m = layer(L.children[0]);
       defs.push(`<mask id="${id}" mask-type="alpha" maskUnits="userSpaceOnUse" x="-100000" y="-100000" width="200000" height="200000">${m}</mask>`);
       body = (L.maskShow ? m : '') + `<g mask="url(#${id})">${L.children.slice(1).map(layer).join('')}</g>`;
+    } else if (registry.layerTypes[L.type]) {
+      const ext = registry.layerTypes[L.type];
+      body = (ext.svg ? ext.svg(L, rec, S, { col, esc }) || '' : '') + (L.children ? L.children.map(layer).join('') : '');
     } else if (L.children) body = L.children.map(layer).join('');
     const op = clamp(rec.op, 0, 1);
     const attrs = [`data-name="${esc(L.name)}"`];

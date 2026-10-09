@@ -143,8 +143,27 @@ kbd { display: inline-block; min-width: 20px; padding: 1px 6px; border-radius: 4
 .llock.on { color: var(--warm); }
 .empty { padding: 16px; color: var(--text3); text-align: center; }
 
+/* ---------- вкладки правой панели ---------- */
+#sidepanel { min-height: 0; }
+.side-tabs { display: flex; gap: 2px; padding: 4px 6px 0; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; flex: none; }
+.side-tabs::-webkit-scrollbar { display: none; }
+.side-tab { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px 6px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--text2); font-size: 12px; white-space: nowrap; border-radius: 5px 5px 0 0; }
+.side-tab:hover { color: var(--text); background: var(--bg2); }
+.side-tab.on { color: #fff; border-bottom-color: var(--accent); }
+.side-tab.on .ic { color: var(--accent); }
+.side-body { flex: 1; min-height: 0; position: relative; }
+.side-body > * { position: absolute; inset: 0; overflow-y: auto; scrollbar-width: thin; }
+.side-body > [hidden] { display: none; }
+.side-tab-body { padding: 8px 10px 20px; }
+.mb-ext { display: flex; gap: 6px; align-items: center; }
+.mb-ext:empty { display: none; }
+.tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-top: 10px; }
+.tpl-card { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; text-align: left; padding: 12px; border-radius: 8px; border: 1px solid var(--line2); background: var(--bg2); color: var(--text); min-height: 86px; }
+.tpl-card:hover { border-color: var(--accent); background: #26354a; }
+.tpl-card span { color: var(--text2); font-size: 12px; }
+
 /* ---------- свойства ---------- */
-#inspector { overflow-y: auto; padding-bottom: 20px; scrollbar-width: thin; display: block; }
+#inspector { padding-bottom: 20px; display: block; }
 .insp-sec { padding: 8px 10px 10px; border-bottom: 1px solid var(--line); }
 .insp-title { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--text2); font-weight: 600; margin-bottom: 7px; }
 .insp-row { display: flex; align-items: center; gap: 8px; margin: 5px 0; flex-wrap: wrap; }

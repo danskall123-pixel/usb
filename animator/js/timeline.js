@@ -5,6 +5,7 @@ import { icon } from './icons.js';
 import { INTERP, INTERP_COLOR, animSettings, keyIndex, shiftKeys, delKey, setKey, evalCh } from './anim.js';
 import { layerOwnChannels, pointChannels, styleChannels, boneChannels, boneColor } from './model.js';
 import { showMenu, numField, selectField, iconBtn, dialog, checkField } from './ui.js';
+import { registry } from './ext.js';
 
 let NAME_W = 210;
 const RULER = 24, ROW = 22;
@@ -90,7 +91,7 @@ export function initTimeline(root) {
       for (let i = arr.length - 1; i >= 0; i--) {
         const L = arr[i];
         const rid = 'L' + L.id;
-        out.push({ id: rid, label: L.name, depth, layer: L, exp: L.type !== 'audio', col: TYPE_COL[L.type], chans: layerOwnChannels(L), kind: 'layer' });
+        out.push({ id: rid, label: L.name, depth, layer: L, exp: L.type !== 'audio', col: TYPE_COL[L.type] || (registry.layerTypes[L.type] && registry.layerTypes[L.type].color) || '#cfd5dc', chans: layerOwnChannels(L), kind: 'layer' });
         if (st.expanded.has(rid)) {
           const d = depth + 1;
           out.push({ id: rid + ':pos', label: 'Положение', depth: d, layer: L, chans: [L.pos], sub: true });
@@ -507,7 +508,17 @@ export function initTimeline(root) {
     if (n) app.commit('Вставка ключей'); else app.toast('Нет подходящих каналов для вставки');
     return true;
   }
-  app.timelineOps = { deleteSel, copySel, paste, hasSel: () => st.sel.size > 0, selectAll: () => { for (const r of st.rows) for (const f of keyMap(r.chans).keys()) st.sel.add(r.id + '|' + f); draw(); } };
+  app.timelineOps = {
+    deleteSel, copySel, paste, hasSel: () => st.sel.size > 0,
+    selectAll: () => { for (const r of st.rows) for (const f of keyMap(r.chans).keys()) st.sel.add(r.id + '|' + f); draw(); },
+    // Map(канал → Set(кадров)) выделенных ключей
+    selection: () => selByChannel(),
+    // строки таймлайна { id, label, layer?, bone?, chans } и выделение 'rowId|кадр'
+    rows: () => st.rows,
+    selectedIds: () => st.sel,
+    setSelected: (ids) => { st.sel.clear(); for (const x of ids) st.sel.add(x); draw(); },
+    redraw: () => draw(),
+  };
 
   function hitKey(x, y) {
     const i = rowAt(y);
@@ -631,6 +642,10 @@ export function initTimeline(root) {
       { label: `Ключ в строке на кадре ${f}`, disabled: !r, action: () => { for (const c of r.chans) setKey(c, f, evalCh(c, f)); app.commit('Новый ключ'); } },
       { label: 'Выделить все ключи', key: 'Ctrl+A', action: () => app.timelineOps.selectAll() },
       { label: 'Снять выделение', disabled: !has, action: () => { st.sel.clear(); draw(); } },
+      ...(() => {
+        const ext = registry.timelineMenu.flatMap((fn) => { try { return fn({ row: r, frame: f, selCount: st.sel.size, selection: selByChannel }) || []; } catch (e) { console.error(e); return []; } });
+        return ext.length ? [{ sep: true }, ...ext] : [];
+      })(),
     ], ev.clientX, ev.clientY);
   });
   canvas.addEventListener('wheel', (ev) => {

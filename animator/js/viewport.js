@@ -6,6 +6,7 @@ import { evaluate } from './scene.js';
 import { Renderer } from './render.js';
 import { tools, boneScreen, screenPathData } from './tools.js';
 import { boneColor, descendants } from './model.js';
+import { registry } from './ext.js';
 
 export function initViewport(el) {
   const canvas = h('canvas', { tabindex: 0, 'aria-label': 'Холст анимации' });
@@ -163,6 +164,7 @@ export function initViewport(el) {
       drawBones(B, S, { dim: !strong, str: t.id === 'bstrength' || B.showStr, bindL: t.id === 'bindlayer' ? L : null });
     }
     if (t.overlay) t.overlay(ctx);
+    for (const fn of registry.overlays) { try { ctx.save(); fn(ctx, S); } catch (e) { console.error(e); } finally { ctx.restore(); } }
   }
 
   function drawPoints(rec, m, byBone) {
@@ -286,7 +288,7 @@ export function initViewport(el) {
   }
 
   // ---------- Мышь / перо ----------
-  let pan = null, drag = false, lastDown = { t: 0, x: 0, y: 0 };
+  let pan = null, drag = false, lastDown = { t: 0, x: 0, y: 0 }, xh = null;
   const mk = (ev) => {
     const r = canvas.getBoundingClientRect();
     const sx = ev.clientX - r.left, sy = ev.clientY - r.top;
@@ -312,6 +314,8 @@ export function initViewport(el) {
     e.dbl = now - lastDown.t < 320 && Math.hypot(e.sx - lastDown.x, e.sy - lastDown.y) < 6;
     lastDown = { t: e.dbl ? 0 : now, x: e.sx, y: e.sy };
     const t = tools[app.tool];
+    xh = registry.viewportHandlers.find((hd) => { try { return hd.down && hd.down(e); } catch (er) { console.error(er); return false; } }) || null;
+    if (xh) { drag = true; canvas.setPointerCapture(ev.pointerId); ev.preventDefault(); return; }
     if (!t.avail()) { app.toast('Инструмент недоступен для этого слоя'); return; }
     drag = true;
     canvas.setPointerCapture(ev.pointerId);
@@ -327,6 +331,14 @@ export function initViewport(el) {
       return;
     }
     const t = tools[app.tool];
+    if (drag && xh) { if (xh.move) xh.move(mk(ev)); return; }
+    if (!drag) {
+      const e = mk(ev);
+      for (const hd of registry.viewportHandlers) {
+        const c = hd.hover && hd.hover(e);
+        if (c) { canvas.style.cursor = c; app.status(null, e); return; }
+      }
+    }
     if (drag) {
       if (t.coalesce && ev.getCoalescedEvents) for (const ce of ev.getCoalescedEvents()) t.move && t.move(mk(ce));
       else if (t.move) t.move(mk(ev));
@@ -346,6 +358,7 @@ export function initViewport(el) {
     }
     if (!drag) return;
     drag = false;
+    if (xh) { const hd = xh; xh = null; if (hd.up) hd.up(mk(ev)); return; }
     const t = tools[app.tool];
     if (t.up) t.up(mk(ev));
   };

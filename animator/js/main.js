@@ -5,7 +5,8 @@ import { icon } from './icons.js';
 import { INTERP, animSettings, evalCh } from './anim.js';
 import { clonePath, cloneLayer, newDoc, newLayer, siblings } from './model.js';
 import { initViewport } from './viewport.js';
-import { initToolbox, initOptbar, initLayers, initInspector, setTool, layerMenu } from './panels.js';
+import { initToolbox, initOptbar, initLayers, initInspector, initSideTabs, setTool, layerMenu } from './panels.js';
+import { registry } from './ext.js';
 import { initTimeline } from './timeline.js';
 import { initPlayback } from './playback.js';
 import { tools, toolForKey } from './tools.js';
@@ -20,9 +21,33 @@ const $ = (s) => document.querySelector(s);
 
 // ---------- команды ----------
 async function cmdNew() {
+  if (registry.templates.length) { templateDialog(); return; }
   if (!(await confirmDialog('Новый проект', 'Текущий проект будет закрыт. Он останется в автосохранении до первого изменения нового. Сохраните его в файл, если нужен.', 'Создать'))) return;
   app.newDocument();
   app.fitView();
+}
+
+// Выбор шаблона нового проекта (шаблоны регистрируют модули расширений)
+function templateDialog() {
+  const all = [{ id: 'empty', name: 'Пустой проект', description: 'Чистый лист с одним векторным слоем', build: null }, ...registry.templates];
+  let d = null;
+  const pick = (t) => {
+    d.close();
+    if (t.build) { app.loadDoc(t.build()); app.frame = app.doc.start > 0 && t.id !== 'empty' ? app.doc.start : 0; app.refresh(); app.render(); }
+    else app.newDocument();
+    app.fitView();
+    app.toast('Новый проект: ' + t.name);
+  };
+  d = dialog({
+    title: 'Новый проект',
+    width: 620,
+    body: h('div', null,
+      h('p', { class: 'muted' }, 'Текущий проект будет закрыт (сохраните его в файл, если нужен). С чего начнём?'),
+      h('div', { class: 'tpl-grid' }, all.map((t) => h('button', { class: 'tpl-card', onclick: () => pick(t) },
+        h('b', null, t.name), h('span', null, t.description || '')))),
+    ),
+    buttons: [{ label: 'Отмена' }],
+  });
 }
 async function cmdDemo() {
   if (!(await confirmDialog('Открыть пример', 'Открыть демонстрационный проект с персонажем на костях? Текущий проект будет закрыт.', 'Открыть'))) return;
@@ -259,6 +284,7 @@ const MENUS = {
     { label: 'Сетка', icon: 'grid', key: "'", checked: app.opts.grid, action: () => toggleOpt('grid') },
     { label: 'Привязка к сетке', icon: 'snap', checked: app.opts.snap, action: () => toggleOpt('snap') },
     { label: 'Показывать кости', icon: 'bones', checked: app.opts.showBones, action: () => toggleOpt('showBones') },
+    { label: 'Простой режим (только основные инструменты)', checked: !!app.opts.simple, action: () => { app.opts.simple = !app.opts.simple; try { localStorage.setItem('anim2d.simple', app.opts.simple ? '1' : ''); } catch (e) { /* нет доступа */ } app.fixTool(); app.refresh(); } },
     { label: 'Шаг сетки…', action: () => {
       dialog({ title: 'Шаг сетки', width: 300, body: numField('Шаг', app.opts.gridSize, { min: 2, max: 500, step: 1, prec: 0, onCommit: (v) => { app.opts.gridSize = v; app.render(); } }) });
     } },
@@ -280,7 +306,8 @@ function buildMenubar(el) {
     openName = name;
     const r = btn.getBoundingClientRect();
     bar.querySelectorAll('.mb').forEach((b) => b.classList.toggle('open', b === btn));
-    showMenu(MENUS[name](), r.left, r.bottom + 2, { anchor: btn, minWidth: 240, onClose: () => { openName = null; btn.classList.remove('open'); } });
+    const extra = (registry.menus[name] || []).flatMap((fn) => { try { return fn() || []; } catch (e) { console.error(e); return []; } });
+    showMenu(MENUS[name]().concat(extra.length ? [{ sep: true }, ...extra] : []), r.left, r.bottom + 2, { anchor: btn, minWidth: 240, onClose: () => { openName = null; btn.classList.remove('open'); } });
   };
   for (const name of Object.keys(MENUS)) {
     const btn = h('button', { class: 'mb' }, name);
@@ -289,6 +316,8 @@ function buildMenubar(el) {
     bar.append(btn);
   }
   const title = h('div', { class: 'doc-title' });
+  const extBtns = h('div', { class: 'mb-ext' });
+  registry.onMenubar = () => { extBtns.replaceChildren(...registry.menubarButtons.map((fn) => { try { return fn(); } catch (e) { console.error(e); return ''; } })); };
   const saved = h('span', { class: 'saved', title: 'Автосохранение в браузере' });
   el.append(
     h('div', { class: 'logo', title: 'Аниматор 2D' }, icon('bone', 20), h('span', null, 'Аниматор 2D')),
@@ -299,6 +328,7 @@ function buildMenubar(el) {
     ),
     title, saved,
     h('div', { class: 'mb-right' },
+      extBtns,
       h('button', { class: 'btn sm', title: 'Сохранить проект в файл (Ctrl+S)', onclick: saveProject }, icon('save', 16), 'Сохранить'),
       h('button', { class: 'btn sm primary', title: 'Экспорт (Ctrl+E)', onclick: () => exportDialog() }, icon('export', 16), 'Экспорт'),
       h('button', { class: 'icon-btn', title: 'Справка (F1)', onclick: helpDialog }, icon('help', 18)),
@@ -358,6 +388,9 @@ function onKey(e) {
     case '-': case '_': app.zoomView(0.8); return;
   }
   if (e.code === 'Quote') { toggleOpt('grid'); return; }
+  for (const sc of registry.shortcuts) {
+    if (sc.key === k && !!sc.shift === e.shiftKey && !!sc.alt === e.altKey && (!sc.when || sc.when())) { e.preventDefault(); sc.run(e); return; }
+  }
   if (e.altKey) return;
   if (k === 'k') { app.keyLayer(); return; }
   const t = toolForKey(k);
@@ -405,6 +438,7 @@ async function boot() {
   initOptbar($('#optbar'));
   initLayers($('#layers'));
   initInspector($('#inspector'));
+  initSideTabs($('#side-tabs'), $('#side-body'), $('#inspector'));
   initViewport($('#viewport'));
   initTimeline($('#timeline'));
   initPlayback();
@@ -441,10 +475,16 @@ async function boot() {
     else if (f.type.startsWith('audio/')) importAudio(f);
   });
 
+  try { app.opts.simple = localStorage.getItem('anim2d.simple') === '1'; } catch (e) { /* нет доступа */ }
+  await loadExtensions();
+  registry.onMenubar && registry.onMenubar();
+
   const restored = await loadAutosave();
   if (!restored) {
     openDemo();
-    setTimeout(() => toast('Добро пожаловать! Это пример: тяните кости инструментом «Управление костями» (Z), Пробел — воспроизведение, F1 — справка.', 7000), 400);
+    const first = registry.hooks.firstRun || [];
+    if (first.length) setTimeout(() => first.forEach((fn) => { try { fn(); } catch (e) { console.error(e); } }), 300);
+    else setTimeout(() => toast('Добро пожаловать! Это пример: тяните кости инструментом «Управление костями» (Z), Пробел — воспроизведение, F1 — справка.', 7000), 400);
   } else {
     app.fitView();
     toast('Восстановлен последний проект');
@@ -452,8 +492,18 @@ async function boot() {
   updateTitle();
 }
 
+// ---------- модули расширений (js/ext/*.js) ----------
+// ?ext=presets,text — загрузить только указанные модули; ?ext= — ни одного
+const EXTENSIONS = ['presets', 'record', 'followpath', 'motionpath', 'keyops', 'library', 'fbf', 'text', 'particles', 'poses', 'guide'];
+async function loadExtensions() {
+  const q = new URLSearchParams(location.search).get('ext');
+  const list = q === null ? EXTENSIONS : q ? q.split(',').filter(Boolean) : [];
+  await Promise.all(list.map((n) => import(`./ext/${n}.js`).catch((e) => console.error(`Модуль «${n}» не загружен:`, e))));
+}
+
 // Доступ из консоли браузера для отладки и скриптов
 window.anim2d = app;
+app.cmd = { cmdNew, openDemo: () => openDemo(), helpDialog, projectSettings, saveProject, openProject, exportDialog, setTool };
 
 export { newDoc, newLayer };
 boot();

@@ -1,10 +1,12 @@
 // Отрисовка вычисленной сцены на canvas (с прозрачностью слоёв, масками, режимами наложения, эффектами).
 import { clamp, rgba, bezierSegs, segsPath, varStrokePath } from './util.js';
 import { evalCh } from './anim.js';
+import { registry } from './ext.js';
 
 export function activeSwitchChild(L, f) {
   if (!L.children.length) return null;
   const v = evalCh(L.sw, f);
+  if (v === '-') return null; // пустой кадр (покадровая анимация)
   return L.children.find((c) => String(c.id) === v) || L.children[L.children.length - 1];
 }
 
@@ -84,6 +86,11 @@ export class Renderer {
       case 'bone':
         this.drawLayers(ctx, L.children, S, o, depth);
         break;
+      default: {
+        const ext = registry.layerTypes[L.type];
+        if (ext && ext.draw) ext.draw(ctx, L, rec, S, o);
+        if (L.children) this.drawLayers(ctx, L.children, S, o, depth);
+      }
     }
   }
 

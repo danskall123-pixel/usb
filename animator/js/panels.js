@@ -4,10 +4,14 @@ import { h } from './util.js';
 import { icon } from './icons.js';
 import { setKey, evalCh } from './anim.js';
 import { tools, TOOL_ORDER, GROUPS, cleanupPaths } from './tools.js';
-import { BLEND_MODES, LAYER_TYPES, boneAncestor } from './model.js';
+import { BLEND_MODES, typeLabel, boneAncestor } from './model.js';
 import { numField, rangeField, checkField, selectField, colorField, showMenu, iconBtn } from './ui.js';
+import { registry } from './ext.js';
 
-const TYPE_ICON = { vector: 'vector', group: 'group', bone: 'bone', switch: 'switch', image: 'image', audio: 'audio' };
+const TYPE_ICON0 = { vector: 'vector', group: 'group', bone: 'bone', switch: 'switch', image: 'image', audio: 'audio' };
+export const TYPE_ICON = new Proxy(TYPE_ICON0, { get: (o, k) => o[k] || (registry.layerTypes[k] && registry.layerTypes[k].icon) || 'vector' });
+const LAYER_TYPES = new Proxy({}, { get: (o, k) => typeLabel(k) });
+const creatableTypes = () => ['vector', 'group', 'bone', 'switch'].concat(Object.keys(registry.layerTypes).filter((t) => registry.layerTypes[t].creatable));
 
 export function setTool(id) {
   const t = tools[id];
@@ -30,9 +34,10 @@ app.on('fixtool', () => {
   const kind = app.ctxKind();
   const want = app.lastTool[kind];
   // текущий инструмент остаётся, если он доступен; на слое костей рисующие инструменты сменяются костяными
-  if (t && t.avail() && !(kind === 'bone' && (t.group === 'draw' || t.group === 'fill'))) return;
+  const ok = (x) => x && x.avail() && (!app.opts.simple || x.simple);
+  if (ok(t) && !(kind === 'bone' && (t.group === 'draw' || t.group === 'fill'))) return;
   const fall = { vector: 'transform', bone: 'bmanip', other: 'ltransform' }[kind];
-  const id = want && tools[want].avail() ? want : tools[fall].avail() ? fall : 'hand';
+  const id = want && ok(tools[want]) ? want : ok(tools[fall]) ? fall : 'hand';
   app.tool = id;
   app.refresh(['toolbox', 'optbar', 'status']);
 });
@@ -41,12 +46,16 @@ app.on('fixtool', () => {
 export function initToolbox(el) {
   app.registerPanel('toolbox', () => {
     el.textContent = '';
+    el.classList.toggle('simple', !!app.opts.simple);
     let grp = null;
-    for (const id of TOOL_ORDER) {
+    const gOrder = Object.keys(GROUPS);
+    const ids = TOOL_ORDER.filter((id) => !app.opts.simple || tools[id].simple)
+      .map((id, i) => [id, i]).sort((a, b) => (gOrder.indexOf(tools[a[0]].group) - gOrder.indexOf(tools[b[0]].group)) || a[1] - b[1]).map((x) => x[0]);
+    for (const id of ids) {
       const t = tools[id];
       if (t.group !== grp) {
         grp = t.group;
-        el.append(h('div', { class: 'tb-group', title: GROUPS[grp] }, GROUPS[grp]));
+        el.append(h('div', { class: 'tb-group', title: GROUPS[grp] || grp }, GROUPS[grp] || grp));
       }
       const av = t.avail();
       el.append(h('button', {
@@ -96,7 +105,7 @@ export function initOptbar(el) {
 export function layerMenu(L) {
   const sub = (type) => ({ label: LAYER_TYPES[type], icon: TYPE_ICON[type], action: () => app.addLayer(type) });
   return [
-    { label: 'Новый слой', sub: [sub('vector'), sub('group'), sub('bone'), sub('switch')] },
+    { label: 'Новый слой', sub: creatableTypes().map(sub) },
     { sep: true },
     { label: 'Переименовать', disabled: !L, action: () => L && renameLayer(L) },
     { label: 'Дублировать', icon: 'copy', key: 'Ctrl+D', disabled: !L, action: () => app.duplicateLayer(L) },
@@ -120,7 +129,7 @@ export function initLayers(el) {
   const list = h('div', { class: 'layers-list', role: 'tree', 'aria-label': 'Слои' });
   const addBtn = iconBtn('plus', 'Новый слой', (e) => {
     const r = e.currentTarget.getBoundingClientRect();
-    showMenu(['vector', 'group', 'bone', 'switch'].map((t) => ({ label: LAYER_TYPES[t], icon: TYPE_ICON[t], action: () => app.addLayer(t) }))
+    showMenu(creatableTypes().map((t) => ({ label: LAYER_TYPES[t], icon: TYPE_ICON[t], action: () => app.addLayer(t) }))
       .concat([{ sep: true }, { label: 'Изображение…', icon: 'image', action: () => app.emit('importImage') }, { label: 'Аудио…', icon: 'audio', action: () => app.emit('importAudio') }]), r.left, r.bottom + 4);
   });
   el.append(
@@ -429,6 +438,10 @@ export function initInspector(el) {
     if (L) {
       if (L.type === 'vector') { const ps = pointsSection(L); if (ps) el.append(ps); }
       if (L.type === 'bone') el.append(boneSection(L));
+      const helpers = { sec, row, upd, live, f, h, icon, numField, rangeField, checkField, selectField, colorField };
+      for (const s of registry.inspector) {
+        try { if (s.when(L)) { const e = s.build(L, helpers); if (e) el.append(e); } } catch (e) { console.error('Секция свойств', s.id, e); }
+      }
       el.append(layerSection(L));
     } else el.append(sec('Слой', h('div', { class: 'insp-note' }, 'Слой не выбран')));
   }
@@ -440,4 +453,40 @@ export function initInspector(el) {
     if (s !== sig || !el.firstChild) { sig = s; build(); return; }
     for (const u of updaters) u();
   });
+}
+
+// ---------- Вкладки правой панели («Свойства» + вкладки модулей) ----------
+export function initSideTabs(bar, body, inspectorEl) {
+  let current = 'props';
+  const mounted = new Map([['props', inspectorEl]]);
+  const show = (id) => {
+    current = id;
+    for (const [k, el] of mounted) el.hidden = k !== id;
+    if (!mounted.has(id)) {
+      const tab = registry.sideTabs.find((t) => t.id === id);
+      const el = h('div', { class: 'side-tab-body' });
+      body.append(el);
+      mounted.set(id, el);
+      try { tab.mount(el); } catch (e) { console.error('Вкладка', id, e); }
+    }
+    const tab = registry.sideTabs.find((t) => t.id === id);
+    if (tab && tab.refresh) try { tab.refresh(); } catch (e) { console.error(e); }
+    renderBar();
+  };
+  const renderBar = () => {
+    bar.textContent = '';
+    const all = [{ id: 'props', title: 'Свойства', icon: 'settings' }, ...registry.sideTabs];
+    bar.hidden = all.length < 2;
+    for (const t of all) {
+      bar.append(h('button', { class: 'side-tab' + (t.id === current ? ' on' : ''), role: 'tab', 'aria-selected': t.id === current, title: t.title, onclick: () => show(t.id) },
+        icon(t.icon || 'plus', 15), h('span', null, t.title)));
+    }
+  };
+  registry.onTabs = renderBar;
+  app.showSideTab = show;
+  app.registerPanel('sidetabs', () => {
+    const tab = registry.sideTabs.find((t) => t.id === current);
+    if (tab && tab.refresh && mounted.has(current)) try { tab.refresh(); } catch (e) { console.error(e); }
+  });
+  renderBar();
 }

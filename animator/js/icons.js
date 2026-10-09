@@ -71,6 +71,9 @@ const P = {
   mask: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/>',
 };
 
+// Добавить иконку из модуля расширения (содержимое <svg> 24×24, обводка currentColor)
+export function registerIcon(name, svgInner) { P[name] = svgInner; }
+
 export function icon(name, size = 20, cls = '') {
   const s = document.createElement('span');
   s.className = 'ic ' + cls;

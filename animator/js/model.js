@@ -1,5 +1,6 @@
 // Модель документа: слои, контуры, точки, кости.
 import { ch } from './anim.js';
+import { registry } from './ext.js';
 
 export const LAYER_TYPES = {
   vector: 'Векторный',
@@ -9,6 +10,8 @@ export const LAYER_TYPES = {
   image: 'Изображение',
   audio: 'Аудио',
 };
+
+export const typeLabel = (t) => LAYER_TYPES[t] || (registry.layerTypes[t] && registry.layerTypes[t].label) || t;
 
 export const BLEND_MODES = {
   'source-over': 'Обычный',
@@ -48,7 +51,7 @@ export function newLayer(doc, type, name) {
   const L = {
     id: doc.nid++,
     type,
-    name: name || LAYER_TYPES[type],
+    name: name || typeLabel(type),
     vis: true,
     lock: false,
     open: true,
@@ -69,6 +72,8 @@ export function newLayer(doc, type, name) {
   if (type === 'switch') L.sw = ch('', 'step');
   if (type === 'image') { L.asset = null; L.w = 100; L.h = 100; }
   if (type === 'audio') { L.asset = null; L.start = 1; L.vol = 1; }
+  const ext = registry.layerTypes[type];
+  if (ext && ext.defaults) ext.defaults(L, doc);
   return L;
 }
 
@@ -180,6 +185,8 @@ export function layerOwnChannels(L) {
   styleChannels(L, out);
   if (L.bones) for (const b of L.bones) out.push(...boneChannels(b));
   if (L.sw) out.push(L.sw);
+  const ext = registry.layerTypes[L.type];
+  if (ext && ext.channels) out.push(...ext.channels(L));
   return out;
 }
 

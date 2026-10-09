@@ -1,6 +1,7 @@
 // Вычисление сцены на кадре: матрицы слоёв, скелеты, деформация точек костями.
 import { M, DEG, clamp, distToSeg } from './util.js';
 import { evalCh } from './anim.js';
+import { registry } from './ext.js';
 
 export function layerLocal(L, f) {
   const p = evalCh(L.pos, f), r = evalCh(L.rot, f) * DEG, s = evalCh(L.scl, f), o = L.origin;
@@ -180,6 +181,8 @@ export function layerWorldPoints(S, L, out = []) {
       out.push(M.apply(m, 0, 0), M.apply(m, b.len, 0));
     }
   }
+  const ext = registry.layerTypes[L.type];
+  if (ext && ext.bounds) for (const p of ext.bounds(L, rec, S) || []) out.push(p);
   if (L.children) for (const C of L.children) layerWorldPoints(S, C, out);
   return out;
 }

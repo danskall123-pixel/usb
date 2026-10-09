@@ -3,8 +3,9 @@ import { M, clamp } from './util.js';
 import { setKey, delKey, evalCh, animSettings, keyIndex } from './anim.js';
 import {
   newDoc, newLayer, buildIndex, boneAncestor, siblings, isAncestor, cloneLayer,
-  layerOwnChannels, transformChannels, boneDescendants, migrate,
+  layerOwnChannels, transformChannels, boneDescendants, migrate, typeLabel,
 } from './model.js';
+import { registry } from './ext.js';
 import { evaluate, invalidateWeights, boneMats } from './scene.js';
 import { History, snapshot } from './history.js';
 
@@ -39,7 +40,7 @@ export const app = {
   on(ev, fn) { (this._listeners[ev] ||= []).push(fn); },
   emit(ev, ...a) { for (const fn of this._listeners[ev] || []) fn(...a); },
 
-  get active() { return this.activeId != null ? this.idx.layers.get(this.activeId) || null : null; },
+  get active() { return this.activeId != null && this.idx ? this.idx.layers.get(this.activeId) || null : null; },
 
   // ----- обновление UI -----
   registerPanel(name, fn) { this._refresh[name] = fn; },
@@ -74,6 +75,7 @@ export const app = {
     this.fixTool();
     this.dirty = false;
     this.emit('docloaded');
+    for (const hk of registry.hooks.docLoaded || []) try { hk(this.doc); } catch (e) { console.error(e); }
     this.refresh();
     this.render();
   },
@@ -186,7 +188,7 @@ export const app = {
   },
   addLayer(type, name) {
     const n = this.idx.list.filter((l) => l.type === type).length + 1;
-    const nm = name || { vector: 'Слой', group: 'Группа', bone: 'Кости', switch: 'Переключатель', image: 'Изображение', audio: 'Аудио' }[type] + ' ' + n;
+    const nm = name || ({ vector: 'Слой', group: 'Группа', bone: 'Кости', switch: 'Переключатель', image: 'Изображение', audio: 'Аудио' }[type] || typeLabel(type)) + ' ' + n;
     const L = newLayer(this.doc, type, nm);
     this.insertLayer(L);
     this.commit('Новый слой');
@@ -194,6 +196,13 @@ export const app = {
   },
   ensureVector() {
     const A = this.active;
+    for (const hk of registry.hooks.vectorTarget || []) {
+      const r = hk(A);
+      if (r) {
+        if (r.lock) { this.toast('Слой заблокирован'); return null; }
+        return r;
+      }
+    }
     if (A && A.type === 'vector') {
       if (A.lock) { this.toast('Слой заблокирован'); return null; }
       return A;

@@ -9,7 +9,9 @@ import { boneMats, layerWorldPoints } from './scene.js';
 
 export const tools = {};
 export const TOOL_ORDER = [];
-const def = (t) => { tools[t.id] = t; TOOL_ORDER.push(t.id); return t; };
+const def = (t) => { if (!tools[t.id]) TOOL_ORDER.push(t.id); tools[t.id] = t; return t; };
+// Регистрация инструмента из модуля расширения: { id, name, icon, key, group, avail(), hint, options?, down/move/up/hover/overlay, simple? }
+export const registerTool = def;
 
 const hctx = document.createElement('canvas').getContext('2d');
 const S = () => app.scene();
@@ -111,7 +113,7 @@ export function hitBone(B, sx, sy, tol = 9) {
 }
 
 // ---------- Перетаскивание точек (с учётом деформации костями) ----------
-function dragItems(ids, wfn) {
+export function dragItems(ids, wfn) {
   const out = [];
   for (const id of ids) {
     const P = S().points.get(id);
@@ -123,7 +125,7 @@ function dragItems(ids, wfn) {
   return out;
 }
 
-function applyDrag(items, fn) {
+export function applyDrag(items, fn) {
   const f = app.frame;
   for (const it of items) {
     const [nx, ny] = fn(it);
@@ -144,7 +146,7 @@ function moveItems(st, e) {
   applyDrag(st.items, (it) => [it.x0 + dx * it.w, it.y0 + dy * it.w]);
 }
 
-function toLocal(L, x, y) {
+export function toLocal(L, x, y) {
   const rec = recOf(L);
   return M.apply(M.inv(rec.world), x, y);
 }
@@ -244,7 +246,7 @@ function handleAt(bb, sx, sy) {
   return null;
 }
 
-function drawBBox(ctx, bb, color = '#5aa0ff') {
+export function drawBBox(ctx, bb, color = '#5aa0ff') {
   const hs = bboxHandles(bb);
   const c = hs.slice(0, 4).map((hd) => bb.toS(hd.x, hd.y));
   ctx.save();
@@ -341,7 +343,7 @@ def({
 });
 
 def({
-  id: 'transform', name: 'Трансформировать точки', icon: 'transform', key: 't', group: 'draw', avail: isVec,
+  id: 'transform', simple: true, name: 'Трансформировать точки', icon: 'transform', key: 't', group: 'draw', avail: isVec,
   hint: 'Тяните точки. Углы рамки — масштаб (Shift — пропорционально, Alt — от центра), за углами — поворот (Shift — шаг 15°).',
   options: () => [{ type: 'check', key: 'lasso', label: 'Лассо' }],
   down(e) {
@@ -399,7 +401,7 @@ def({
 });
 
 def({
-  id: 'addpoint', name: 'Добавить точку', icon: 'addpoint', key: 'a', group: 'draw', avail: () => true,
+  id: 'addpoint', simple: true, name: 'Добавить точку', icon: 'addpoint', key: 'a', group: 'draw', avail: () => true,
   hint: 'Клик/протяжка — новые точки. При выделенной крайней точке — продолжить линию; клик по кривой — вставить точку; клик по первой точке — замкнуть.',
   options: () => [{ type: 'check', key: 'sharp', label: 'Острые углы' }],
   down(e) {
@@ -558,7 +560,7 @@ def({
 });
 
 def({
-  id: 'freehand', name: 'Кисть (от руки)', icon: 'freehand', key: 'f', group: 'draw', avail: () => true, coalesce: true, cursor: 'crosshair',
+  id: 'freehand', simple: true, name: 'Кисть (от руки)', icon: 'freehand', key: 'f', group: 'draw', avail: () => true, coalesce: true, cursor: 'crosshair',
   hint: 'Рисуйте мышью или пером. Замкнутые линии заливаются цветом заливки. Перо поддерживает нажим.',
   options: () => [
     { type: 'check', key: 'fhClose', label: 'Замыкать', def: true },
@@ -659,7 +661,7 @@ function shapePoints(type, x0, y0, x1, y1, n) {
 }
 
 def({
-  id: 'shape', name: 'Фигура', icon: 'shape', key: 'r', group: 'draw', avail: () => true, cursor: 'crosshair',
+  id: 'shape', simple: true, name: 'Фигура', icon: 'shape', key: 'r', group: 'draw', avail: () => true, cursor: 'crosshair',
   hint: 'Протяните, чтобы нарисовать фигуру. Shift — равные стороны, Alt — от центра.',
   options: () => [
     { type: 'select', key: 'shType', label: 'Тип', items: SHAPES, def: 'rect' },
@@ -795,7 +797,7 @@ def({
 // ======================= ЗАЛИВКА =======================
 
 def({
-  id: 'selshape', name: 'Выделить фигуру', icon: 'selshape', key: 'q', group: 'fill', avail: isVec,
+  id: 'selshape', simple: true, name: 'Выделить фигуру', icon: 'selshape', key: 'q', group: 'fill', avail: isVec,
   hint: 'Клик по фигуре — выделить (Shift — добавить). Тяните, чтобы двигать. Стиль справа применяется к выделенным.',
   options: () => [
     { type: 'button', label: 'Вперёд', action: () => reorderShapes(1) },
@@ -832,7 +834,7 @@ function reorderShapes(dir) {
 }
 
 def({
-  id: 'bucket', name: 'Заливка / пипетка', icon: 'bucket', key: 'p', group: 'fill', avail: isVec, cursor: 'copy',
+  id: 'bucket', simple: true, name: 'Заливка / пипетка', icon: 'bucket', key: 'p', group: 'fill', avail: isVec, cursor: 'copy',
   hint: 'Клик по фигуре — применить текущий стиль. Alt+клик — пипетка (взять стиль фигуры).',
   options: () => [
     { type: 'check', key: 'bkFill', label: 'Заливка', def: true },
@@ -1051,7 +1053,7 @@ function ikSolve(B, f, chain, effId, gl, target) {
 }
 
 def({
-  id: 'bmanip', name: 'Управление костями (IK)', icon: 'bmanip', key: 'z', group: 'bone', avail: () => !!app.boneLayerFor(),
+  id: 'bmanip', simple: true, name: 'Управление костями (IK)', icon: 'bmanip', key: 'z', group: 'bone', avail: () => !!app.boneLayerFor(),
   hint: 'Тяните кость — цепочка изгибается (IK). Alt — вращать только эту кость. Корневую кость можно двигать. На кадре 0 — только предпросмотр позы.',
   options: () => [
     { type: 'check', key: 'ikRoot', label: 'IK до корня', def: false },
@@ -1171,7 +1173,7 @@ def({
 
 // ======================= СЛОЙ =======================
 
-function layerBox(L) {
+export function layerBox(L) {
   const rec = recOf(L);
   if (!rec) return null;
   const pts = layerWorldPoints(S(), L);
@@ -1188,7 +1190,7 @@ function layerBox(L) {
 }
 
 def({
-  id: 'ltransform', name: 'Трансформировать слой', icon: 'move', key: 'm', group: 'layer', avail: () => !!app.active,
+  id: 'ltransform', simple: true, name: 'Трансформировать слой', icon: 'move', key: 'm', group: 'layer', avail: () => !!app.active,
   hint: 'Тяните — переместить слой. Ручки рамки — масштаб (Shift — пропорционально), за углами — поворот вокруг точки вращения.',
   options: () => [{ type: 'button', label: 'Сбросить трансформацию', action: () => {
     const L = app.active;
@@ -1255,7 +1257,7 @@ def({
   },
 });
 
-function drawOrigin(ctx, L) {
+export function drawOrigin(ctx, L) {
   const rec = recOf(L);
   if (!rec) return;
   const [x, y] = app.toScreen(...M.apply(rec.world, L.origin[0], L.origin[1]));
@@ -1289,7 +1291,7 @@ def({
   overlay(ctx) { if (app.active) drawOrigin(ctx, app.active); },
 });
 
-function setOrigin(L, no) {
+export function setOrigin(L, no) {
   const o = L.origin, dx = o[0] - no[0], dy = o[1] - no[1];
   for (const k of L.pos.k) {
     const r = evalCh(L.rot, k.f) * DEG, s = evalCh(L.scl, k.f), c = Math.cos(r), sn = Math.sin(r);
@@ -1351,16 +1353,16 @@ def({
 });
 
 def({
-  id: 'hand', name: 'Рука (вид)', icon: 'hand', key: 'h', group: 'view', avail: () => true, cursor: 'grab',
+  id: 'hand', simple: true, name: 'Рука (вид)', icon: 'hand', key: 'h', group: 'view', avail: () => true, cursor: 'grab',
   hint: 'Тяните — двигать вид. Колесо — зум, Пробел+тяните или правая кнопка — рука из любого инструмента.',
 });
 
-export const GROUPS = { draw: 'Рисование', fill: 'Заливка', bone: 'Кости', bind: 'Привязка', layer: 'Слой', camera: 'Камера', view: 'Вид' };
+export const GROUPS = { draw: 'Рисование', fill: 'Заливка', anim: 'Анимация', bone: 'Кости', bind: 'Привязка', layer: 'Слой', camera: 'Камера', view: 'Вид' };
 
 // Подобрать инструмент по клавише с учётом контекста слоя
 export function toolForKey(k) {
   const kind = app.ctxKind();
-  const cands = TOOL_ORDER.map((id) => tools[id]).filter((t) => t.key === k && t.avail());
+  const cands = TOOL_ORDER.map((id) => tools[id]).filter((t) => t.key === k && t.avail() && (!app.opts.simple || t.simple));
   if (!cands.length) return null;
   const pref = kind === 'bone' ? ['bone', 'bind'] : kind === 'vector' ? ['draw', 'fill', 'bind'] : ['bind', 'layer'];
   cands.sort((a, b) => (pref.includes(b.group) ? 1 : 0) - (pref.includes(a.group) ? 1 : 0));
