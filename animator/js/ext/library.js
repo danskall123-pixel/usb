@@ -7,11 +7,11 @@ import { registerIcon, icon } from '../icons.js';
 import { h, M, OVAL_CURV, distToSeg, pointInPoly } from '../util.js';
 import { setKey, evalCh } from '../anim.js';
 import { newDoc, newLayer } from '../model.js';
-import { evaluate, layerWorldPoints } from '../scene.js';
+import { evaluate, layerWorldPoints, camMatrix } from '../scene.js';
 import { Renderer } from '../render.js';
 import { buildCharacter, makePath, style, oval, star, C, CHARACTER_COLORS } from '../demo.js';
 import { setTool } from '../panels.js';
-import { layerBox } from '../tools.js';
+import { layerBox, placeFrame } from '../tools.js';
 
 registerIcon('library', '<rect x="3" y="3.5" width="7.5" height="7.5" rx="1.5"/><circle cx="17.2" cy="7.2" r="3.8"/><path d="M6.8 13.5l4 7h-8z"/><path d="M14 13.5h7v7h-7z"/>');
 registerIcon('lib-search', '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/>');
@@ -83,12 +83,45 @@ function hill(cx, yTop, amp, n, phase) {
   pts.push([hw, hb, 0], [-hw, hb, 0]);
   return pts;
 }
-function bgGroup(d, name, kids) {
+// ground — где у фона земля (доля половины высоты кадра от центра вниз): туда встают персонажи и деревья
+function bgGroup(d, cx, name, kids, ground) {
   const G = grp(d, name, ...kids);
+  G.libGround = (cx.h / 2) * ground;
   G.lock = true;
   G.open = false;
   G.lib = 'bg';
+  G.libWH = [cx.w, cx.h]; // размер кадра, под который нарисован фон
+  G.libFit = [cx.w, cx.h]; // размер кадра при последней подгонке
   return G;
+}
+
+// Фон из библиотеки накрывает кадр камеры на всех кадрах сцены: с учётом наезда, поворота и панорамы.
+// Опора — поза покоя камеры (кадр 0); если камера потом едет, фон сдвигается к середине её пути
+// и увеличивается ровно настолько, чтобы в кадре не было краёв.
+function fitBg(G, doc) {
+  const [w0, h0] = Array.isArray(G.libWH) ? G.libWH : [doc.w, doc.h];
+  const ex = w0 / 2 + BLEED, ey = h0 / 2 + BLEED, hw = doc.w / 2, hh = doc.h / 2;
+  const C0 = camMatrix(doc, 0);
+  const last = Math.max(doc.end, doc.start, 0), step = Math.max(1, Math.ceil(last / 2000));
+  // рамка всех кадров камеры в координатах кадра камеры в покое
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let f = 0; f <= last + step - 1; f += step) {
+    const T = M.mul(C0, M.inv(camMatrix(doc, Math.min(f, last))));
+    for (const [x, y] of [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]) {
+      const [u, v] = M.apply(T, x, y);
+      if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
+      x0 = Math.min(x0, u); x1 = Math.max(x1, u); y0 = Math.min(y0, v); y1 = Math.max(y1, v);
+    }
+  }
+  if (!(x1 >= x0 && y1 >= y0)) { x0 = -hw; x1 = hw; y0 = -hh; y1 = hh; }
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, cover = Math.max(1, (x1 - x0) / 2 / ex, (y1 - y0) / 2 / ey);
+  const z0 = Math.abs(evalCh(doc.cam.zoom, 0)) || 1, r0 = evalCh(doc.cam.roll, 0), p0 = evalCh(doc.cam.pos, 0);
+  const c = M.apply(M.rotate(r0 * Math.PI / 180), cx / z0, cy / z0), s = cover / z0;
+  // анимированные пользователем каналы не трогаем
+  if (G.pos.k.length === 1) G.pos.k[0].v = [p0[0] + c[0], p0[1] + c[1]];
+  if (G.rot.k.length === 1) G.rot.k[0].v = r0;
+  if (G.scl.k.length === 1 && Number.isFinite(s) && s > 0) G.scl.k[0].v = [s, s];
+  G.libFit = [doc.w, doc.h];
 }
 
 // ---------- анимации ----------
@@ -185,15 +218,15 @@ const ITEMS = [];
 const item = (o) => ITEMS.push(o);
 
 item({
-  id: 'boy', cat: 'chars', kind: 'char', name: 'Мальчик', tags: 'мальчик персонаж человек ребенок синий кости скелет герой',
+  id: 'boy', stand: true, cat: 'chars', kind: 'char', name: 'Мальчик', tags: 'мальчик персонаж человек ребенок синий кости скелет герой',
   build: (d, cx) => character(d, cx, { name: 'Мальчик' }),
 });
 item({
-  id: 'girl', cat: 'chars', kind: 'char', name: 'Девочка', tags: 'девочка персонаж человек ребенок красный хвостики юбка бантик кости герой',
+  id: 'girl', stand: true, cat: 'chars', kind: 'char', name: 'Девочка', tags: 'девочка персонаж человек ребенок красный хвостики юбка бантик кости герой',
   build: (d, cx) => character(d, cx, { name: 'Девочка', colors: GIRL, extra: girlExtra }),
 });
 item({
-  id: 'kid-wave', cat: 'chars', kind: 'char', name: 'Мальчик в кепке машет', tags: 'мальчик персонаж зеленый кепка машет привет анимация готовая кости',
+  id: 'kid-wave', stand: true, cat: 'chars', kind: 'char', name: 'Мальчик в кепке машет', tags: 'мальчик персонаж зеленый кепка машет привет анимация готовая кости',
   anim: true, loop: [1, 48], thumbFrame: 14,
   build: (d, cx) => character(d, cx, { name: 'Мальчик в кепке', colors: GREEN, extra: capExtra, wave: true }),
 });
@@ -216,7 +249,7 @@ item({
   build: (d) => vec(d, 'Облако', blob(d, [[-62, 8, 40], [-12, -20, 52], [46, -4, 42], [86, 16, 28], [0, 24, 104, 24]], '#ffffff', '#cfe2f5', 3)),
 });
 item({
-  id: 'tree', cat: 'nature', name: 'Дерево', tags: 'дерево лес природа зелень крона ствол',
+  id: 'tree', stand: true, cat: 'nature', name: 'Дерево', tags: 'дерево лес природа зелень крона ствол',
   build: (d) => pivot(vec(d, 'Дерево',
     P(d, [[-15, 100, 0], [-10, 10, 0], [10, 10, 0], [15, 100, 0]], true, style('#a0693a', '#6e4424', 4)),
     blob(d, [[-48, -40, 44], [0, -80, 56], [48, -40, 44], [0, -26, 50]], '#6cc04a', '#3f8a2c', 3.5),
@@ -225,7 +258,7 @@ item({
   ), 0, 100),
 });
 item({
-  id: 'fir', cat: 'nature', name: 'Ёлка', tags: 'елка ель сосна дерево лес зима новый год хвоя',
+  id: 'fir', stand: true, cat: 'nature', name: 'Ёлка', tags: 'елка ель сосна дерево лес зима новый год хвоя',
   build: (d) => {
     const st = style('#3f9f5a', '#2a6e3e', 4);
     return pivot(vec(d, 'Ёлка',
@@ -237,7 +270,7 @@ item({
   },
 });
 item({
-  id: 'bush', cat: 'nature', name: 'Куст', tags: 'куст кустарник ягоды зелень сад',
+  id: 'bush', stand: true, cat: 'nature', name: 'Куст', tags: 'куст кустарник ягоды зелень сад',
   build: (d) => pivot(vec(d, 'Куст',
     blob(d, [[-44, 6, 32], [0, -14, 40], [42, 4, 34], [0, 18, 70, 20]], '#5cb84a', '#3d8a30', 3.5),
     P(d, oval(-22, -6, 5, 5), true, style('#ff4d5a', '#c22a38', 1.5)),
@@ -246,7 +279,7 @@ item({
   ), 0, 38),
 });
 item({
-  id: 'flower', cat: 'nature', name: 'Цветок', tags: 'цветок ромашка растение лепестки сад луг',
+  id: 'flower', stand: true, cat: 'nature', name: 'Цветок', tags: 'цветок ромашка растение лепестки сад луг',
   build: (d) => {
     const petals = [];
     for (let i = 0; i < 5; i++) {
@@ -262,7 +295,7 @@ item({
   },
 });
 item({
-  id: 'grass', cat: 'nature', name: 'Трава', tags: 'трава травка газон луг зелень',
+  id: 'grass', stand: true, cat: 'nature', name: 'Трава', tags: 'трава травка газон луг зелень',
   build: (d) => pivot(vec(d, 'Трава',
     P(d, [[-34, 24, 0], [-30, -20, 0], [-18, 6, 0], [-6, -40, 0], [4, 6, 0], [18, -30, 0], [26, 8, 0], [38, -12, 0], [40, 24, 0]], true, style('#5fae45', '#3f8a2c', 3)),
     P(d, [[-50, 26, 0], [-44, -12, 0], [-32, 8, 0], [-20, -32, 0], [-10, 6, 0], [2, -46, 0], [12, 6, 0], [24, -26, 0], [32, 8, 0], [48, -16, 0], [50, 26, 0]], true, style('#7cc95a', '#4f9a3a', 3)),
@@ -308,7 +341,7 @@ item({
   ),
 });
 item({
-  id: 'house', cat: 'things', name: 'Дом', tags: 'дом домик здание крыша окно дверь',
+  id: 'house', stand: true, cat: 'things', name: 'Дом', tags: 'дом домик здание крыша окно дверь',
   build: (d) => {
     const win = (x0) => [
       P(d, rect(x0, 14, x0 + 30, 44), true, style('#bfe4ff', '#5f7fa0', 3.5)),
@@ -327,7 +360,7 @@ item({
   },
 });
 item({
-  id: 'car', cat: 'things', name: 'Машина', tags: 'машина автомобиль машинка транспорт колеса ехать',
+  id: 'car', stand: true, cat: 'things', name: 'Машина', tags: 'машина автомобиль машинка транспорт колеса ехать',
   build: (d) => {
     const body = vec(d, 'Кузов',
       P(d, [[-114, 34, 0], [-116, 4, 1], [-100, -12, 0], [-62, -14, 0], [-40, -54, 0], [40, -54, 0], [64, -14, 0], [102, -10, 1], [116, 8, 1], [114, 34, 0]], true, style('#ff6b4a', '#b8402a', 4)),
@@ -370,7 +403,7 @@ item({
   ),
 });
 item({
-  id: 'gift', cat: 'things', name: 'Подарок', tags: 'подарок коробка праздник бант сюрприз',
+  id: 'gift', stand: true, cat: 'things', name: 'Подарок', tags: 'подарок коробка праздник бант сюрприз',
   build: (d) => {
     const rib = style('#ffd44d', '#d9a520', 3);
     return vec(d, 'Подарок',
@@ -406,11 +439,11 @@ item({
       .map(([x, y]) => P(d, [[x * hw - 12, y * hh + 4], [x * hw - 3, y * hh - 9], [x * hw + 7, y * hh + 3]], false, line('#5a9a3e', 4)));
     const flowers = [[-0.62, 0.76, '#ffffff'], [-0.3, 0.92, '#ffd44d'], [0.12, 0.78, '#ff7eb6'], [0.45, 0.72, '#ffffff'], [0.76, 0.8, '#ffd44d']]
       .flatMap(([x, y, c]) => [P(d, oval(x * hw, y * hh, 6, 6), true, style(c, null, 0)), P(d, oval(x * hw, y * hh, 2.2, 2.2), true, style('#ffb13b', null, 0))]);
-    return bgGroup(d, 'Фон: летний луг', [
+    return bgGroup(d, cx, 'Фон: летний луг', [
       vec(d, 'Небо', skyRect(d, cx, '#bfe4ff')),
       vec(d, 'Холмы', P(d, hill(cx, hh * 0.12, hh * 0.07, 5, 0.4), true, style('#a8dc86', '#86c466', 4))),
       vec(d, 'Земля', P(d, hill(cx, hh * 0.42, hh * 0.035, 6, 2.1), true, style('#8fd16b', '#5a9a3e', 5)), marks, flowers),
-    ]);
+    ], 0.56);
   },
 });
 item({
@@ -428,7 +461,7 @@ item({
     const tw = vec(d, 'Звёзды (мерцают)', twinkle);
     for (let f = cx.start + 6, on = false; f <= cx.end; f += 12, on = !on) setKey(tw.op, f, on ? 1 : 0.3, 'smooth');
     const mx = hw * 0.6, my = -hh * 0.55;
-    return bgGroup(d, 'Фон: ночь со звёздами', [
+    return bgGroup(d, cx, 'Фон: ночь со звёздами', [
       vec(d, 'Небо', skyRect(d, cx, '#14204a')),
       vec(d, 'Звёзды', calm),
       tw,
@@ -439,7 +472,7 @@ item({
       ),
       vec(d, 'Холмы вдали', P(d, hill(cx, hh * 0.38, hh * 0.07, 4, 0.8), true, style('#22325c', '#1a2850', 3))),
       vec(d, 'Холмы', P(d, hill(cx, hh * 0.6, hh * 0.05, 5, 2.4), true, style('#16223f', '#0f1830', 3))),
-    ]);
+    ], 0.68);
   },
 });
 item({
@@ -450,12 +483,12 @@ item({
       .map(([x, y]) => { const X = x * hw, Y = y * hh; return P(d, [[X - 24, Y], [X - 12, Y - 6], [X, Y], [X + 12, Y - 6], [X + 24, Y]], false, line('#bfe6ff', 4)); });
     const glints = [[0, 18, 46], [8, 34, 32], [-6, 50, 20]].map(([dx, dy, l]) => P(d, [[sx + dx - l, hy + dy, 0], [sx + dx + l, hy + dy, 0]], false, line('#ffe9a8', 5)));
     const bird = (x, y) => P(d, [[x - 14, y + 3, 0], [x - 7, y - 4], [x, y, 0], [x + 7, y - 4], [x + 14, y + 3, 0]], false, line('#3b4a6b', 3));
-    return bgGroup(d, 'Фон: море', [
+    return bgGroup(d, cx, 'Фон: море', [
       vec(d, 'Небо', skyRect(d, cx, '#a8dcff'), bird(-hw * 0.5, -hh * 0.55), bird(-hw * 0.38, -hh * 0.64)),
       vec(d, 'Солнце', P(d, oval(sx, hy, 70, 70), true, style('#ffe08a', '#ffc94d', 4))),
       vec(d, 'Море', P(d, rect(-W, hy, W, H), true, style('#3d9be0', null, 0)), P(d, rect(-W, hy, W, hy + hh * 0.06), true, style('#3489d0', null, 0)), glints, waves),
       vec(d, 'Песок', P(d, hill(cx, hh * 0.6, hh * 0.03, 4, 1.3), true, style('#f3d99a', '#d9b86a', 4))),
-    ]);
+    ], 0.75);
   },
 });
 
@@ -538,6 +571,25 @@ function viewCenter() {
   const el = app.viewEl;
   return el ? app.toDoc(el.clientWidth / 2, el.clientHeight / 2) : [0, 0];
 }
+// Повторный клик по карточке не кладёт объект ровно поверх такого же: каждый следующий — чуть правее и ниже
+// flat — сдвигать только вбок на шаг flat (для стоящих на земле), иначе — по диагонали на 28 пикселей экрана
+function freeSpot(p, flat = 0) {
+  const S = app.scene(), tol = app.pxToDoc(3), step = flat || app.pxToDoc(28);
+  const centers = app.doc.layers.filter((X) => X.lib !== 'bg').map((X) => layerWorldPoints(S, X)).filter((pts) => pts.length).map((pts) => mid(bbox(pts)));
+  let q = p;
+  for (let n = 1; n <= 12 && centers.some((c) => Math.abs(c[0] - q[0]) < tol && Math.abs(c[1] - q[1]) < tol); n++) q = [p[0] + step * n, p[1] + (flat ? 0 : step * 0.6 * n)];
+  return q;
+}
+// Высота земли фона из библиотеки под точкой p (если земля видна в нижней части экрана), иначе null
+function groundAt(p) {
+  const G = app.doc.layers.find((X) => X.lib === 'bg' && typeof X.libGround === 'number' && X.vis);
+  const rec = G && app.scene().layers.get(G.id);
+  if (!rec || !app.viewEl) return null;
+  const l = M.apply(M.inv(rec.world), p[0], p[1]);
+  const q = M.apply(rec.world, l[0], G.libGround);
+  const sy = app.toScreen(q[0], q[1])[1], H = app.viewEl.clientHeight;
+  return Number.isFinite(q[1]) && sy > H * 0.35 && sy < H * 0.98 ? q[1] : null;
+}
 function topAncestor(L) {
   let T = L;
   while (T && app.idx.parent.get(T.id)) T = app.idx.parent.get(T.id);
@@ -551,27 +603,58 @@ function uniqueName(base) {
   return base + ' ' + n;
 }
 
-// Куда прикрепить часть персонажа: слой костей активного слоя и кость (голова или ближайшая к точке броска)
-function partTarget(it, at) {
-  const B = app.active && app.boneLayerFor(app.active);
-  if (!B || !B.bones.length) return null;
+const HEAD = /голов|head/i;
+// Персонажи документа — видимые слои костей, в которых есть кости
+const rigs = () => app.idx.list.filter((X) => X.type === 'bone' && X.bones && X.bones.length && X.vis);
+// Персонаж для частей: выбранный, а если не выбран никакой — единственный в проекте
+function partRig() {
+  const A = app.active && app.boneLayerFor(app.active);
+  if (A && A.bones.length) return { B: A, auto: false };
+  const all = rigs();
+  return all.length === 1 ? { B: all[0], auto: true } : { B: null, many: all.length > 1 };
+}
+// Ближайшая к точке документа кость персонажа B; near — точка рядом с персонажем
+function nearBone(B, p) {
   const rec = app.scene().layers.get(B.id);
   if (!rec || !rec.bc) return null;
-  const head = B.bones.find((b) => /голов|head/i.test(b.name));
-  if (!at && head) {
-    // поза покоя: точка на кости головы
-    return { B, bone: head, local: M.apply(rec.bc.M0.get(head.id), head.len * (it.anchor || 0.5), 0) };
-  }
-  const p = at || viewCenter();
   let best = null, bd = Infinity;
   for (const b of B.bones) {
-    const W = M.mul(rec.bc.world, rec.bc.Mt.get(b.id));
+    const m = rec.bc.Mt.get(b.id);
+    if (!m) continue;
+    const W = M.mul(rec.bc.world, m);
     const o = M.apply(W, 0, 0), t = M.apply(W, b.len, 0);
     const dd = distToSeg(p[0], p[1], o[0], o[1], t[0], t[1]).d;
     if (dd < bd) { bd = dd; best = b; }
   }
-  if (!best || bd > 140 * M.scaleFactor(rec.bc.world)) return { B, far: true }; // далеко от персонажа — отдельный объект
-  return { B, bone: best, local: M.apply(M.inv(M.mul(rec.bc.world, rec.bc.D.get(best.id))), p[0], p[1]) };
+  if (!best) return null;
+  const lim = 140 * (M.scaleFactor(rec.bc.world) || 1);
+  return { B, bone: best, near: bd <= lim, r: bd / lim, local: M.apply(M.inv(M.mul(rec.bc.world, rec.bc.D.get(best.id))), p[0], p[1]) };
+}
+
+// Куда прикрепить часть персонажа: слой костей и кость (голова или ближайшая к точке броска)
+function partTarget(it, at) {
+  const pr = partRig();
+  if (at) {
+    // бросили на холст — к тому персонажу, на которого бросили (выбранный — при равенстве)
+    let best = null, bs = Infinity;
+    for (const B of rigs()) {
+      const n = nearBone(B, at), sc = n ? n.r - (B === pr.B ? 0.05 : 0) : Infinity;
+      if (n && n.near && sc < bs) { best = n; bs = sc; }
+    }
+    if (best) return best;
+    return pr.B ? { B: pr.B, far: true } : pr.many ? { many: true } : null; // далеко от персонажа — отдельный объект
+  }
+  const B = pr.B;
+  if (!B) return pr.many ? { many: true } : null;
+  const rec = app.scene().layers.get(B.id);
+  if (!rec || !rec.bc) return null;
+  const head = B.bones.find((b) => HEAD.test(b.name));
+  if (head && rec.bc.M0.get(head.id)) {
+    // поза покоя: точка на кости головы
+    return { B, bone: head, auto: pr.auto, local: M.apply(rec.bc.M0.get(head.id), head.len * (it.anchor || 0.5), 0) };
+  }
+  const n = nearBone(B, viewCenter());
+  return n && n.near ? { ...n, auto: pr.auto } : { B, far: true };
 }
 
 let ownCommit = false;
@@ -596,57 +679,70 @@ function insertItem(it, at = null) {
     const had = doc.layers.some((X) => X.lib === 'bg');
     const T = topAncestor(app.active), inOld = !!(T && T.lib === 'bg');
     doc.layers = doc.layers.filter((X) => X.lib !== 'bg');
-    const cam = evalCh(doc.cam.pos, 0);
-    L.pos.k[0].v = [cam[0], cam[1]];
+    fitBg(L, doc);
     doc.layers.unshift(L);
     app.restructure();
     // активный слой не меняем: заблокированная группа фона мешала бы рисовать
     if (inOld || app.activeId == null || !app.idx.layers.has(app.activeId)) {
-      app.activeId = (doc.layers.find((X) => X !== L && X.type === 'vector') || doc.layers.find((X) => X !== L) || L).id;
+      const top = doc.layers.filter((X) => X !== L && !X.lock && X.vis && X.type !== 'audio').reverse();
+      app.setActive((top.find((X) => X.type === 'vector') || top[0] || L).id);
     }
     tool = null;
     msg = (had ? 'Фон заменён: ' : 'Фон добавлен: ') + it.name + '. Он в самом низу списка слоёв и заблокирован от случайных правок (значок замка).';
   } else {
     L.name = uniqueName(L.name);
     let tgt = it.kind === 'part' ? partTarget(it, at) : null;
-    const far = tgt && tgt.far ? tgt.B : null;
-    if (far) tgt = null;
+    const far = tgt && tgt.far ? tgt.B : null, many = !!(tgt && tgt.many);
+    if (far || many) tgt = null;
     if (tgt) {
       placeAt(L, tgt.local[0], tgt.local[1], it.pin);
       L.bind = tgt.bone.id;
-      const hide = tgt.B.children.filter((X) => X.vis && (X.name === it.replaces || (X.lib && X.lib === L.lib)));
+      const kids = tgt.B.children;
+      const hide = kids.filter((X) => X.vis && (X.name === it.replaces || (X.lib && X.lib === L.lib)));
       for (const X of hide) X.vis = false;
-      tgt.B.children.push(L);
+      // над заменённым слоем или над верхним слоем той же кости (ближняя рука остаётся впереди лица)
+      let j = -1;
+      kids.forEach((X, i) => { if (hide.includes(X) || X.bind === tgt.bone.id) j = i; });
+      kids.splice(j >= 0 ? j + 1 : kids.length, 0, L);
       tgt.B.open = true;
       msg = `«${it.name}» — прикреплено к персонажу «${tgt.B.name}» (кость «${tgt.bone.name}»)` + (hide.length ? `. Прежний слой «${hide[0].name}» скрыт` : '');
     } else {
       const T = topAncestor(app.active);
       let i = T ? doc.layers.indexOf(T) + 1 : doc.layers.length;
       let p = at;
-      if (it.kind === 'shadow' && T && T.lib !== 'bg') {
-        // тень — под выбранным объектом, у его нижнего края
+      const tb = it.kind === 'shadow' && T && T.lib !== 'bg' ? bbox(layerWorldPoints(app.scene(), T)) : null;
+      if (tb && tb[2] > tb[0] && (T.type === 'bone' || (tb[2] - tb[0]) * (tb[3] - tb[1]) < doc.w * doc.h * 0.3)) {
+        // тень — под выбранным персонажем или предметом, у его нижнего края (не под землёй или фоном)
         i = doc.layers.indexOf(T);
-        if (!p) {
-          const b = bbox(layerWorldPoints(app.scene(), T));
-          if (b[2] > b[0]) p = [(b[0] + b[2]) / 2, b[3] - 6];
-        }
+        if (!p) p = [(tb[0] + tb[2]) / 2, tb[3] - 6];
         msg = `Добавлено: Тень — под «${T.name}»`;
       }
-      if (!p) p = viewCenter();
+      if (!p) {
+        // персонажи, деревья, дом… встают на землю фона из библиотеки, остальное — в центр экрана
+        p = viewCenter();
+        const g = it.stand ? groundAt(p) : null, b = g != null ? contentBox(L) : null;
+        if (b) p = [p[0], g - (b[3] - b[1]) / 2];
+        p = freeSpot(p, b ? Math.max(app.pxToDoc(28), (b[2] - b[0]) * 0.6) : 0);
+      }
       placeAt(L, p[0], p[1], it.pin);
       doc.layers.splice(i, 0, L);
       if (it.kind === 'char') {
         tool = 'bmanip';
-        msg = it.anim ? `Добавлено: ${it.name} — с готовой анимацией. Нажмите Пробел, чтобы посмотреть`
+        // готовая анимация длиннее сцены — сцену удлиняем, чтобы движение не обрывалось
+        const last = it.anim ? Math.max(0, ...app.allKeyFrames(L)) : 0;
+        const longer = last > doc.end;
+        if (longer) doc.end = last;
+        msg = it.anim ? `Добавлено: ${it.name} — с готовой анимацией` + (longer ? ` (сцена удлинена до ${last} кадров)` : '') + '. Нажмите Пробел, чтобы посмотреть'
           : `Добавлено: ${it.name}. Тяните руки, ноги и голову — инструмент «Управление костями» (Z)`;
       } else if (it.kind === 'part') {
-        msg = far ? `Добавлено: ${it.name} — отдельно, далеко от «${far.name}». Чтобы прикрепить, перетащите карточку прямо на персонажа`
-          : `Добавлено: ${it.name}. Чтобы прикрепить к персонажу, сначала выберите его в списке слоёв`;
+        msg = far ? `Добавлено: ${it.name} — отдельно, далеко от «${far.name}». Чтобы прикрепить, перетащите карточку прямо на лицо персонажа`
+          : many ? `Добавлено: ${it.name} — отдельно. В проекте несколько персонажей: выберите нужного в списке слоёв или перетащите карточку прямо на его лицо`
+            : `Добавлено: ${it.name} — отдельно: в проекте нет персонажа на костях. Добавьте персонажа (раздел «Персонажи»), затем снова эту часть`;
       }
     }
-    msg = msg || `Добавлено: ${it.name}. Тяните его мышью, чтобы поставить на место`;
+    msg = msg || `Добавлено: ${it.name}. Тяните объект мышью, чтобы поставить на место`;
     app.restructure();
-    app.activeId = L.id;
+    app.setActive(L.id);
   }
   app.clearSel();
   app.fixTool();
@@ -662,6 +758,7 @@ registerViewportHandler({
     const p = placing, L = app.active;
     if (!p || !L || L !== p.L || app.tool !== 'ltransform' || app.frame === 0 || L.lock) return false;
     if (L.pos.k.length > 1) { placing = null; return false; } // положение уже анимировано — не вмешиваемся
+    if (placeFrame(L) === 0) return false; // на первом кадре сцены расстановку без ключа делает сам инструмент
     const bb = layerBox(L);
     if (!bb) return false;
     const c = [[bb.x0, bb.y0], [bb.x1, bb.y0], [bb.x1, bb.y1], [bb.x0, bb.y1]].map(([x, y]) => bb.toS(x, y));
@@ -695,7 +792,7 @@ registerViewportHandler({
     if (!p.moved) return;
     placing = null;
     libCommit('Перестановка: ' + p.L.name);
-    app.toast('Объект переставлен без анимации. Дальнейшие перемещения на кадрах после 0 будут создавать ключи анимации', 4200);
+    app.toast('Объект поставлен на место — без ключа анимации. Следующие перемещения на этом кадре уже создадут ключ: так объект и оживает', 4600);
   },
 });
 
@@ -804,8 +901,9 @@ function mount(el) {
     for (const it of ITEMS.filter((x) => x.cat === c.id)) {
       const cv = h('canvas', { class: 'lib-thumb', width: TW, height: TH, 'aria-hidden': 'true' });
       const tip = it.kind === 'bg' ? 'Нажмите — фон на весь кадр (встанет в самый низ)'
-        : it.kind === 'part' ? 'Нажмите — прикрепить к выбранному персонажу. Или перетащите на нужное место'
-          : 'Нажмите — добавить в центр экрана. Или перетащите на холст';
+        : it.kind === 'part' ? 'Нажмите — прикрепить к голове персонажа (выбранного или единственного). Или перетащите прямо на лицо'
+          : it.stand ? 'Нажмите — добавить на холст (на фоне из библиотеки встанет на землю). Или перетащите в нужное место'
+            : 'Нажмите — добавить в центр экрана. Или перетащите в нужное место';
       const btn = h('button', { class: 'lib-card', draggable: 'true', title: it.name + '\n' + tip + (it.anim ? '\nС готовой анимацией — наведите, чтобы посмотреть' : ''), 'data-item': it.id },
         cv, h('span', { class: 'lib-name' }, it.name),
         it.anim ? h('span', { class: 'lib-badge', title: 'С готовой анимацией' }, icon('play', 9)) : null,
@@ -837,7 +935,7 @@ function mount(el) {
     h('div', { class: 'lib-top' },
       h('div', { class: 'lib-qwrap' }, icon('lib-search', 15, 'lib-qic'), q),
       chips,
-      h('div', { class: 'lib-hint' }, 'Нажмите на карточку — объект появится в центре экрана. Или перетащите её прямо на холст.')),
+      h('div', { class: 'lib-hint' }, 'Нажмите на карточку — объект появится на холсте. Или перетащите её прямо в нужное место.')),
     list, empty,
   );
   function filter() {
@@ -870,12 +968,14 @@ function refresh() {
     for (const c of ui.cards) if (c.it.kind === 'bg') queue.push(c);
     pump();
   }
-  const B = app.active && app.boneLayerFor(app.active);
-  const note = B && B.bones.length
-    ? [h('span', null, 'Прикрепятся к персонажу «'), h('b', null, B.name), h('span', null, B.bones.some((b) => /голов|head/i.test(b.name)) ? '» — к голове.' : '».')]
-    : ['Сначала выберите персонажа в списке слоёв — тогда рот и глаза прикрепятся к его голове и будут двигаться вместе с ней.'];
-  const sig = B ? B.id + B.name : '';
-  if (ui.noteSig !== sig) { ui.noteSig = sig; ui.partsNote.replaceChildren(...note); }
+  const { B, many } = partRig();
+  const sig = B ? B.id + '|' + B.name : many ? 'many' : '';
+  if (ui.noteSig === sig) return;
+  ui.noteSig = sig;
+  ui.partsNote.replaceChildren(...(B
+    ? [h('span', null, 'Прикрепятся к персонажу «'), h('b', null, B.name), h('span', null, B.bones.some((b) => HEAD.test(b.name)) ? '» — к голове и будут двигаться вместе с ней.' : '».')]
+    : [many ? 'Выберите персонажа в списке слоёв (или перетащите карточку прямо на его лицо) — рот и глаза прикрепятся к голове и будут двигаться вместе с ней.'
+      : 'Сначала добавьте персонажа из раздела «Персонажи» — рот и глаза прикрепятся к его голове.']));
 }
 
 registerSideTab({ id: 'library', title: 'Библиотека', icon: 'library', order: 5, mount, refresh });
@@ -940,7 +1040,7 @@ registerInspector({
   id: 'library-mouth', order: 40,
   when: (L) => L.type === 'switch' && L.lib === 'mouth',
   build: (L, { sec }) => sec('Рот',
-    h('div', { class: 'insp-note' }, 'Нижний дочерний слой — закрытый рот, верхний — широко открытый. Есть звук? Добавьте его и нажмите «Липсинк по звуку» выше.'),
+    h('div', { class: 'insp-note' }, 'Нижний дочерний слой — закрытый рот, верхний — широко открытый. Есть запись голоса? Добавьте её (Файл → Импорт звука…) — ниже, в свойствах слоя, появится кнопка «Липсинк по звуку».'),
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn sm', title: 'Случайно менять фазы рта с текущего кадра до конца сцены — как будто персонаж говорит', onclick: () => chatter(L) }, 'Болтать без звука'),
       h('button', { class: 'btn sm', title: 'Удалить ключи рта: он будет закрыт на всех кадрах', onclick: () => silence(L) }, 'Молчать'))),
@@ -953,6 +1053,28 @@ registerInspector({
     h('div', { class: 'btn-row' },
       h('button', { class: 'btn sm', title: 'Заново расставить моргания до конца сцены (ключи масштаба слоя будут заменены)', onclick: () => { blinkKeys(L, ctxOf(app.doc)); app.commit('Моргание'); app.toast(`Моргание до кадра ${app.doc.end}`); } }, 'Моргать до конца сцены'),
       h('button', { class: 'btn sm', title: 'Удалить ключи масштаба: глаза всегда открыты', onclick: () => { L.scl.k = [L.scl.k[0]]; app.commit('Без моргания'); app.toast('Моргание убрано'); } }, 'Не моргать'))),
+});
+
+registerInspector({
+  id: 'library-bg', order: 40,
+  when: (L) => L.lib === 'bg' && !!L.children,
+  build: (L, { sec }) => sec('Фон из библиотеки',
+    h('div', { class: 'insp-note' }, L.lock
+      ? 'Фон заблокирован (замок в списке слоёв), чтобы случайно не сдвинуть его при рисовании. Новый фон из библиотеки заменит этот.'
+      : 'Новый фон из библиотеки заменит этот.'),
+    h('div', { class: 'btn-row' },
+      h('button', {
+        class: 'btn sm', title: 'Растянуть фон на весь кадр — с учётом камеры (наезд, поворот, панорама) и размера кадра',
+        onclick: () => { fitBg(L, app.doc); app.commit('Фон: подогнать под кадр'); app.toast('Фон подогнан под кадр и камеру'); },
+      }, 'Подогнать под кадр'))),
+});
+
+// Размер кадра изменили в «Настройках проекта» — фон из библиотеки снова накрывает весь кадр
+registerHook('beforeCommit', (label, doc) => {
+  if (!doc) return;
+  for (const G of doc.layers) {
+    if (G.lib === 'bg' && Array.isArray(G.libFit) && (G.libFit[0] !== doc.w || G.libFit[1] !== doc.h)) fitBg(G, doc);
+  }
 });
 
 // ---------- шаблоны нового проекта ----------
@@ -1067,7 +1189,6 @@ registerHook('docLoaded', (doc) => {
 app.library = { items: ITEMS, categories: CATS, insert: (id, at) => insertItem(byId.get(id), at || null) };
 
 addStyle(`
-#side-body > #inspector[hidden] { display: none; } /* ядро: #inspector { display: block } перебивает [hidden] */
 .lib-tab { padding-top: 0; }
 .lib-top { position: sticky; top: 0; z-index: 2; background: var(--bg1); padding: 8px 0 4px; border-bottom: 1px solid var(--line); margin-bottom: 2px; }
 .lib-qwrap { position: relative; display: flex; }
@@ -1078,6 +1199,7 @@ addStyle(`
 .lib-chip:hover { color: var(--text); background: var(--bg3); }
 .lib-chip.on { background: var(--accent-bg); color: var(--accent); border-color: rgba(76,157,255,.45); }
 .lib-hint { color: var(--text3); font-size: 11.5px; margin: 6px 0 2px; }
+@media (max-height: 940px) { .lib-top { position: static; } } /* на невысоком экране шапка не закрывает карточки */
 .lib-cat { margin-top: 10px; }
 .lib-cat[hidden], .lib-card[hidden] { display: none; }
 .lib-cat .insp-title { margin-bottom: 6px; }

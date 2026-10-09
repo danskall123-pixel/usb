@@ -5,12 +5,11 @@
 // Shift+N — копия текущего, B — пустой кадр, Enter — следующий шаг. Луковая кожа показывает соседние рисунки.
 import { app } from '../app.js';
 import { setKey, delKey, evalCh, keyIndex, shiftKeys } from '../anim.js';
-import { newDoc, newLayer, cloneLayer, siblings } from '../model.js';
+import { newDoc, newLayer, cloneLayer, siblings, boneAncestor } from '../model.js';
 import { Renderer } from '../render.js';
-import { layerWorldPoints } from '../scene.js';
-import { snapshot } from '../history.js';
+import { layerWorldPoints, boneWorld } from '../scene.js';
 import { screenPathData } from '../tools.js';
-import { M, h, clamp, segsPath } from '../util.js';
+import { M, h, clamp, segsPath, distToSeg } from '../util.js';
 import { icon, registerIcon } from '../icons.js';
 import {
   registerInspector, registerMenu, registerShortcut, registerHook, registerOverlay,
@@ -136,12 +135,63 @@ function extendEnd(t, F) {
   return ` Анимация продлена до кадра ${need}.`;
 }
 
+// Скрытый слой среди L и его родителей (самый верхний) или null, если всё видно
+function hiddenIn(L) {
+  let r = null;
+  for (let X = L; X; X = app.idx.parent.get(X.id)) if (!X.vis) r = X;
+  return r;
+}
+
+// ---------- покадровый слой внутри слоя костей ----------
+// Без привязки к кости точки рисунка «гнутся» по костям, и на кадре ≠ 0 штрих ложится не там, где нарисован.
+// Рисунок — это картинка целиком, поэтому прикрепляем весь покадровый слой к одной кости (жёстко).
+function effBind(L) {
+  for (let X = L; X && X.type !== 'bone'; X = app.idx.parent.get(X.id)) if (X.bind != null) return X.bind;
+  return null;
+}
+function autoBind(F, near) {
+  const B = boneAncestor(app.idx, F);
+  if (!B || !B.bones.length || effBind(F) != null) return null;
+  const has = (id) => id != null && B.bones.some((b) => b.id === id);
+  let id = near ? effBind(near) : null;
+  if (!has(id) && near && near.paths) {
+    // чаще всего встречающаяся кость среди точек слоя
+    const cnt = new Map();
+    for (const p of near.paths) for (const pt of p.pts) if (pt.bone != null) cnt.set(pt.bone, (cnt.get(pt.bone) || 0) + 1);
+    let best = 0;
+    for (const [b, n] of cnt) if (n > best && has(b)) { best = n; id = b; }
+  }
+  if (!has(id) && near) {
+    // ближайшая кость к середине содержимого
+    const S = app.scene(), rec = S.layers.get(B.id), pts = layerWorldPoints(S, near);
+    if (rec && rec.bc && pts.length) {
+      let cx = 0, cy = 0;
+      for (const [x, y] of pts) { cx += x; cy += y; }
+      cx /= pts.length; cy /= pts.length;
+      let bd = Infinity;
+      for (const b of B.bones) {
+        const m = boneWorld(rec, b.id);
+        if (!m) continue;
+        const a = M.apply(m, 0, 0), t = M.apply(m, b.len, 0);
+        const d = distToSeg(cx, cy, a[0], a[1], t[0], t[1]).d;
+        if (d < bd) { bd = d; id = b.id; }
+      }
+    }
+  }
+  if (!has(id)) id = (B.bones.find((b) => b.parent == null) || B.bones[0]).id;
+  F.bind = id;
+  return B.bones.find((b) => b.id === id);
+}
+
 // ---------- активный слой следует за видимым рисунком ----------
 let lastSet = null;    // id слоя, который сделали активным мы (а не пользователь)
 let detour = null;   // { tool, now }: инструмент, сброшенный при заходе на пустой кадр, и чем его заменило ядро
+let autoSet = false;  // идёт наша собственная смена активного слоя
 function setActiveAuto(T) {
   lastSet = T.id;
-  if (app.activeId !== T.id) app.setActive(T.id);
+  if (app.activeId === T.id) return;
+  autoSet = true;
+  try { app.setActive(T.id); } finally { autoSet = false; }
 }
 function follow() {
   const A = app.active, F = fbfOf(A);
@@ -164,6 +214,24 @@ app.on('frame', () => { if (!app.playing) follow(); });
 app.on('toggleplay', () => { if (!app.playing) follow(); });
 app.on('stop', () => follow());
 
+// Выбрали в списке слоёв рисунок, которого на этом кадре не видно, — переходим к кадру, где он показан
+app.on('active', (id) => {
+  if (autoSet || id == null || app.playing || !app.idx) return;
+  const D = app.idx.layers.get(id), F = fbfOf(D);
+  if (!F || D === F || shownAt(F, app.frame) === D) return;
+  let best = null;
+  for (const e of exposures(F)) if (e.D === D && (!best || Math.abs(e.f - app.frame) < Math.abs(best.f - app.frame))) best = e;
+  if (!best) return;
+  lastSet = D.id;
+  app.setFrame(best.f);
+});
+
+// Рисунок, который где-то показан, но не на текущем кадре
+function strayDrawing(F, A) {
+  if (!A || A === F || shownAt(F, app.frame) === A) return false;
+  return F.sw.k.some((k) => k.f > 0 && String(k.v) === String(A.id));
+}
+
 // Отмена штриха, создавшего рисунок, удаляет и рисунок — ядро тогда делает активным первый слой документа.
 // Остаёмся в покадровом слое: на видимом рисунке или на самом слое.
 let track = null; // { id, F } — активный слой внутри покадрового
@@ -181,10 +249,11 @@ app.on('render', () => {
   }
   const F = fbfOf(app.active);
   track = F ? { id: app.activeId, F: F.id } : null;
-  // после отмены/повтора — снова на видимый рисунок (если активный выбирали мы)
+  // после отмены/повтора/удаления — снова на видимый рисунок (если активный выбирали мы
+  // или активным оказался рисунок, которого на этом кадре не видно)
   if (app.history.i !== histI) {
     histI = app.history.i;
-    if (F && !app.playing && app.activeId === lastSet) follow();
+    if (F && !app.playing && (app.activeId === lastSet || strayDrawing(F, app.active))) follow();
   }
 });
 
@@ -227,7 +296,7 @@ function cleanupPending() {
   F.sw.k[0].v = p.z0;
   app.doc.end = p.end;
   app.restructure();
-  if (app.idx.layers.has(p.active) && app.activeId !== p.active) { lastSet = p.active; app.setActive(p.active); }
+  if (app.idx.layers.has(p.active) && app.activeId !== p.active) setActiveAuto(app.idx.layers.get(p.active));
   app.refresh();
   app.render();
 }
@@ -244,6 +313,8 @@ registerHook('vectorTarget', (A) => {
   const D = targetDrawing(F);
   detour = null;
   setActiveAuto(D);
+  const hid = !D.lock && hiddenIn(D);
+  if (hid) app.toast(`Слой «${hid.name}» скрыт — рисунок не будет виден. Включите «глаз» в панели «Слои».`, 4000);
   return D;
 });
 
@@ -294,7 +365,7 @@ function addFrame(F, kind, t = slotFrame(F)) {
 
 function deleteCurrent(F) {
   if (!editableF(F)) return;
-  const f = app.frame, ex = exposures(F), i = curIndex(ex, f);
+  const f = app.frame || firstFrame(), ex = exposures(F), i = curIndex(ex, f); // кадр 0 показывает первый кадр анимации
   if (i < 0) { app.toast('Здесь нет рисунка. Перейдите на кадр с рисунком.'); return; }
   const e = ex[i];
   if (!e.D) {
@@ -318,7 +389,7 @@ function deleteCurrent(F) {
 // Дольше/короче держать текущий рисунок: сдвигаются все следующие кадры
 function changeHold(F, d) {
   if (!editableF(F)) return;
-  const f = app.frame, ex = exposures(F), i = curIndex(ex, f);
+  const f = app.frame || firstFrame(), ex = exposures(F), i = curIndex(ex, f);
   if (i < 0) { app.toast('Перейдите на кадр с рисунком'); return; }
   const e = ex[i], doc = app.doc;
   const len = lenOf(e);
@@ -351,7 +422,7 @@ function reuse(F, D) {
   const ext = extendEnd(f, F);
   setActiveAuto(D);
   app.commit('Повтор рисунка');
-  app.toast(`«${D.name}» показан с кадра ${f}` + ext);
+  app.toast(`«${D.name}» показан с кадра ${f}.` + ext);
 }
 
 function jumpTo(F, e) {
@@ -382,14 +453,18 @@ function createFbf() {
   const f = app.frame > 0 ? app.frame : firstFrame();
   const n = app.idx.list.filter(isFbf).length + 1;
   const { F, D } = makeFbf(doc, 'Покадровая ' + n, f);
-  let A = app.active;
+  const A0 = app.active;
+  let A = A0;
   while (A) { const p = app.idx.parent.get(A.id); if (!p || p.type !== 'switch') break; A = p; }
   // в проекте без анимации длина растёт вместе с рисунками — воспроизведение крутит ровно нарисованное
   const fresh0 = app.allKeyFrames().every((x) => x === 0) && !app.idx.list.some((x) => x.type === 'audio');
   if (A) { const sib = siblings(doc, app.idx, A); sib.splice(sib.indexOf(A) + 1, 0, F); } else doc.layers.push(F);
   if (fresh0) doc.end = Math.max(doc.start, f + stepOf(F) - 1);
-  const ext = fresh0 ? ' Длина анимации растёт вместе с рисунками.' : extendEnd(f, F);
+  let ext = fresh0 ? ' Длина анимации растёт вместе с рисунками.' : extendEnd(f, F);
   app.restructure();
+  // внутри персонажа (слоя костей) — прикрепить к кости выбранной части, чтобы рисунок ложился, где нарисован
+  const bone = autoBind(F, A0 && A0.type !== 'bone' ? A0 : null);
+  if (bone) ext += ` Слой прикреплён к кости «${bone.name}» — рисунки двигаются вместе с ней.`;
   setActiveAuto(D);
   if (app.frame !== f) app.setFrame(f);
   if (!DRAW_TOOLS.includes(app.tool)) app.cmd.setTool('freehand');
@@ -411,6 +486,12 @@ function convertToFbf(L) {
   const F = newLayer(doc, 'switch', L.name);
   Object.assign(F, { fbf: true, fbfStep: 2, fbfAuto: true, open: true, bind: L.bind });
   L.bind = null;
+  // движение слоя (положение, поворот, масштаб, прозрачность) переходит к покадровому слою — объект
+  // продолжает двигаться как раньше, а сам рисунок становится неподвижной картинкой
+  for (const k of ['pos', 'rot', 'scl', 'op', 'origin']) { const t = F[k]; F[k] = L[k]; L[k] = t; }
+  const P = app.idx.parent.get(L.id);
+  // L внутри обычного переключателя (например, фазы рта): его ключи теперь показывают покадровый слой
+  if (P && P.type === 'switch') for (const k of P.sw.k) if (String(k.v) === String(L.id)) k.v = String(F.id);
   const sib = siblings(doc, app.idx, L);
   sib.splice(sib.indexOf(L), 1, F);
   F.children.push(L);
@@ -420,18 +501,21 @@ function convertToFbf(L) {
   syncZero(F);
   if (fresh0) doc.end = Math.max(doc.start, f + stepOf(F) - 1); else extendEnd(f, F);
   app.restructure();
+  const bone = autoBind(F, L);
   setActiveAuto(L);
   if (app.frame !== f) app.setFrame(f);
   setOnion(true);
   app.commit('Покадровый слой из векторного');
   bakeNoted = bakeNoted || flat > 0;
   revealSection();
-  app.toast(`«${F.name}» теперь покадровый: это рисунок 1` + (flat ? ' (в его текущей позе)' : '') + '. Перейдите дальше (Enter) и рисуйте следующий кадр.', 5000);
+  app.toast(`«${F.name}» теперь покадровый: это рисунок 1` + (flat ? ' (в его текущей позе)' : '') + '. Перейдите дальше (Enter) и рисуйте следующий кадр.'
+    + (bone ? ` Слой прикреплён к кости «${bone.name}».` : ''), 6000);
 }
 
-// ---------- чистота документа после каждого действия ----------
-// Рисунок — это «один кадр мультфильма»: правки на кадре > 0 не превращаются в ключи внутри рисунка,
-// а сразу меняют сам рисунок. Ссылки на удалённые рисунки убираются.
+// ---------- чистота документа перед каждым снимком истории ----------
+// Рисунок — это «один кадр мультфильма»: правки на кадре > 0 не превращаются в ключи внутри рисунка
+// (ни у точек, ни у положения/поворота/масштаба самого рисунка), а сразу меняют сам рисунок.
+// Ссылки на удалённые рисунки убираются. Двигается весь покадровый слой (его ключи не трогаем).
 function bake(D, f) {
   let n = 0;
   const flat = (c) => {
@@ -440,43 +524,63 @@ function bake(D, f) {
     c.k = [{ f: 0, v: Array.isArray(v) ? v.slice() : v, i: c.k[0].i }];
     n++;
   };
+  if (D.pos) { flat(D.pos); flat(D.rot); flat(D.scl); flat(D.op); }
   if (D.paths) for (const p of D.paths) { for (const pt of p.pts) { flat(pt.pos); flat(pt.curv); } flat(p.fill); flat(p.stroke); flat(p.width); }
   if (D.children) for (const C of D.children) n += bake(C, f);
   return n;
 }
 let baked = 0;
 function tidy() {
-  let n = 0;
   const walk = (arr) => {
     for (const L of arr) {
       if (isFbf(L)) {
-        const len = L.sw.k.length;
         L.sw.k = L.sw.k.filter((k) => k.f === 0 || k.v === '-' || byId(L, k.v));
-        if (L.sw.k.length !== len) n++;
-        const z = L.sw.k[0].v;
         syncZero(L);
-        if (L.sw.k[0].v !== z) n++;
-        for (const D of L.children) { const b = bake(D, app.frame); baked += b; n += b; }
+        for (const D of L.children) baked += bake(D, app.frame);
       }
       if (L.children) walk(L.children);
     }
   };
   walk(app.doc.layers);
-  return n;
 }
+
+// Новый слой («+» в панели слоёв, импорт картинки), созданный, пока выбран рисунок, ядро кладёт внутрь
+// покадрового слоя — там он невидим и не нужен. Выносим его рядом: обычный слой — выше, картинку — ниже
+// (подложка, чтобы обводить).
+function adoptStray(label) {
+  if (!/^(Новый слой|Импорт изображения)/.test(label)) return;
+  const A = app.active, P = A && app.idx.parent.get(A.id);
+  if (!isFbf(P) || P.sw.k.some((k) => String(k.v) === String(A.id))) return;
+  P.children.splice(P.children.indexOf(A), 1);
+  const sib = siblings(app.doc, app.idx, P), below = label.startsWith('Импорт');
+  sib.splice(sib.indexOf(P) + (below ? 0 : 1), 0, A);
+  app.restructure();
+  app.toast(`«${A.name}» — отдельный слой ${below ? 'под' : 'над'} покадровым «${P.name}». Новый рисунок в покадровом слое — клавиша N.`, 4500);
+}
+
+// Покадровый слой перетащили в слой костей — прикрепить к кости (если пользователь сам не выбрал «гибкую»)
+function bindMoved() {
+  for (const F of app.idx.list) {
+    if (!isFbf(F) || F.fbfFlex) continue;
+    const b = autoBind(F, F);
+    if (b) app.toast(`«${F.name}» прикреплён к кости «${b.name}»: рисунки двигаются вместе с ней. Другую кость можно выбрать в «Свойствах» → «Кость».`, 5000);
+  }
+}
+
 let bakeNoted = false;
-app.on('commit', () => {
-  if (!app.doc) return;
+registerHook('beforeCommit', (label) => {
+  if (!app.doc || !app.idx) return;
+  label = String(label || '');
+  adoptStray(label);
+  if (label === 'Перемещение слоя') bindMoved();
+  // пользователь сам снял привязку покадрового слоя к кости — больше не прикрепляем автоматически
+  if (label === 'Привязка слоя' && isFbf(app.active)) app.active.fbfFlex = app.active.bind == null || undefined;
   baked = 0;
-  if (!tidy()) return;
+  tidy();
   if (baked && !bakeNoted) {
     bakeNoted = true;
-    app.toast('Рисунок покадрового слоя — это один кадр мультфильма: правка применена к самому рисунку (без ключей внутри него).', 5000);
+    app.toast('Рисунок покадрового слоя — это один кадр мультфильма: правка применена к самому рисунку (без ключей внутри него). Чтобы двигать всё — выберите сам покадровый слой.', 6000);
   }
-  // поправить уже записанный шаг истории, чтобы действие осталось одним шагом отмены
-  const H = app.history;
-  if (H.stack[H.i]) H.stack[H.i].snap = snapshot(app.doc);
-  app.render();
 });
 
 // ---------- луковая кожа рисунков (поверх холста, контурами — как в Moho) ----------
@@ -607,6 +711,15 @@ function fbfSection(L, { sec, row, upd, numField, checkField }) {
   const S = app.scene();
   const V = thumbView(F, S);
   const ex = exposures(F);
+  // один рисунок может быть показан много раз (циклы) — рисуем миниатюру один раз и копируем
+  const thumbs = new Map();
+  const th = (D) => {
+    const c0 = thumbs.get(D);
+    if (!c0) { const c = thumb(D, S, V); thumbs.set(D, c); return c; }
+    const c = h('canvas', { class: 'fbf-th', width: TW, height: TH });
+    c.getContext('2d').drawImage(c0, 0, 0);
+    return c;
+  };
   const btn = (ic, label, key, title, fn, cls = '') => h('button', { class: 'btn sm ' + cls, title: title + (key ? ` (${key})` : ''), onclick: fn },
     icon(ic, 15), h('span', null, label), key ? h('kbd', null, key) : null);
 
@@ -647,7 +760,7 @@ function fbfSection(L, { sec, row, upd, numField, checkField }) {
   const rows = [];
   ex.forEach((e, idx) => {
     const r = h('div', { class: 'fbf-item' + (e.D ? '' : ' empty'), role: 'option', title: e.D ? `Перейти к «${e.D.name}»` : 'Перейти к пустому кадру', onclick: () => jumpTo(F, e) },
-      e.D ? thumb(e.D, S, V) : h('span', { class: 'fbf-th fbf-th-empty' }, icon('fbfempty', 14)),
+      e.D ? th(e.D) : h('span', { class: 'fbf-th fbf-th-empty' }, icon('fbfempty', 14)),
       h('span', { class: 'fbf-nm' }, e.D ? e.D.name : 'пусто'),
       h('span', { class: 'fbf-fr' }, rangeText(e)),
       e.D ? h('button', { class: 'icon-btn fbf-re', title: `Показать «${e.D.name}» ещё раз — с текущего кадра`, 'aria-label': 'Повторить с текущего кадра', onclick: (ev) => { ev.stopPropagation(); reuse(F, e.D); } }, icon('loop', 14)) : null,
@@ -658,8 +771,8 @@ function fbfSection(L, { sec, row, upd, numField, checkField }) {
   const used = new Set(ex.map((e) => e.D).filter(Boolean));
   const unused = F.children.filter((c) => !used.has(c));
   for (const D of unused) {
-    list.append(h('div', { class: 'fbf-item unused', title: 'Этот рисунок сейчас нигде не показан', onclick: () => { setActiveAuto(D); app.toast(`«${D.name}» нигде не показан. Кнопка ⟳ — показать его с текущего кадра.`, 3500); } },
-      thumb(D, S, V),
+    list.append(h('div', { class: 'fbf-item unused', title: 'Этот рисунок сейчас нигде не показан', onclick: () => { app.setActive(D.id); app.toast(`«${D.name}» нигде не показан. Кнопка ⟳ — показать его с текущего кадра.`, 3500); } },
+      th(D),
       h('span', { class: 'fbf-nm' }, D.name),
       h('span', { class: 'fbf-fr' }, 'не показан'),
       h('button', { class: 'icon-btn fbf-re', title: `Показать «${D.name}» с текущего кадра`, 'aria-label': 'Показать с текущего кадра', onclick: (ev) => { ev.stopPropagation(); reuse(F, D); } }, icon('loop', 14)),
@@ -670,11 +783,11 @@ function fbfSection(L, { sec, row, upd, numField, checkField }) {
   // обновление без пересборки (при смене кадра)
   upd({
     set() {
-      const f = app.frame, ex2 = exposures(F), i = curIndex(ex2, f);
-      status.textContent = statusText(F, f);
+      const f = app.frame || firstFrame(), ex2 = exposures(F), i = curIndex(ex2, f); // кадр 0 показывает первый кадр
+      status.textContent = statusText(F, app.frame);
       holdV.textContent = i >= 0 ? framesW(lenOf(ex2[i])) : '—';
       holdV.title = i >= 0 && ex2[i].end == null ? `Последний рисунок держится до конца анимации (кадр ${app.doc.end})` : '';
-      for (const [r, idx] of rows) r.classList.toggle('on', idx === i && f > 0);
+      for (const [r, idx] of rows) r.classList.toggle('on', idx === i);
       const on = list.querySelector('.fbf-item.on');
       if (on && list.scrollHeight > list.clientHeight) {
         const top = on.offsetTop - list.offsetTop;
@@ -752,7 +865,14 @@ registerHook('docLoaded', (doc) => {
   lastSet = null;
   detour = null;
   track = null;
-  if (!doc._fbfStart) return;
+  if (!doc._fbfStart) {
+    // открыли проект: активным должен быть рисунок, видимый на текущем кадре (кадр выставляется после загрузки)
+    setTimeout(() => {
+      const A = app.active, F = fbfOf(A);
+      if (F && A !== F && shownAt(F, app.frame) !== A && !app.playing) setActiveAuto(shownAt(F, app.frame) || F);
+    }, 0);
+    return;
+  }
   delete doc._fbfStart;
   setTimeout(() => {
     const F = app.idx.list.find(isFbf);
@@ -768,26 +888,27 @@ registerHook('docLoaded', (doc) => {
 // ---------- горячие клавиши (только когда выбран покадровый слой или его рисунок) ----------
 const inFbf = () => !!fbfOf(app.active);
 const withF = (fn) => () => { const F = fbfOf(app.active); if (F) fn(F); };
-registerShortcut({ key: 'n', when: inFbf, run: withF((F) => addFrame(F, 'blank')) });
-registerShortcut({ key: 'n', shift: true, when: inFbf, run: withF((F) => addFrame(F, 'copy')) });
-registerShortcut({ key: 'b', when: inFbf, run: withF((F) => addFrame(F, 'empty')) });
-registerShortcut({ key: 'enter', when: inFbf, run: withF((F) => stepFrame(F, 1)) });
-registerShortcut({ key: 'enter', shift: true, when: inFbf, run: withF((F) => stepFrame(F, -1)) });
+registerShortcut({ key: 'n', when: inFbf, run: withF((F) => addFrame(F, 'blank')), label: 'Покадровая анимация: новый рисунок через «шаг»' });
+registerShortcut({ key: 'n', shift: true, when: inFbf, run: withF((F) => addFrame(F, 'copy')), label: 'Покадровая анимация: копия текущего рисунка' });
+registerShortcut({ key: 'b', when: inFbf, run: withF((F) => addFrame(F, 'empty')), label: 'Покадровая анимация: пустой кадр' });
+registerShortcut({ key: 'enter', when: inFbf, run: withF((F) => stepFrame(F, 1)), keyLabel: 'Enter', label: 'Покадровая анимация: следующий шаг' });
+registerShortcut({ key: 'enter', shift: true, when: inFbf, run: withF((F) => stepFrame(F, -1)), keyLabel: 'Enter', label: 'Покадровая анимация: предыдущий шаг' });
 
 // Shift+←/→ на рисунке: ядро ищет ключи только в самом рисунке (их там нет) — ищем в покадровом слое
-window.addEventListener('keydown', (e) => {
-  if (!e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
-  const A = app.active, F = fbfOf(A);
-  if (!F || A === F) return;
-  const tg = e.target;
-  if ((tg.tagName === 'INPUT' && !['checkbox', 'range', 'color', 'button'].includes(tg.type)) || tg.tagName === 'TEXTAREA' || tg.tagName === 'SELECT' || tg.isContentEditable) return;
-  if (document.querySelector('.modal-back')) return;
-  e.preventDefault();
-  e.stopImmediatePropagation();
+const onDrawing = () => { const A = app.active, F = fbfOf(A); return !!F && A !== F; };
+function jumpDrawing(dir) {
+  const F = fbfOf(app.active);
+  if (!F) return;
   const frames = app.allKeyFrames(F), f = app.frame;
-  const t = e.key === 'ArrowRight' ? frames.find((x) => x > f) : [...frames].reverse().find((x) => x < f);
+  const t = dir > 0 ? frames.find((x) => x > f) : [...frames].reverse().find((x) => x < f);
   if (t != null) app.setFrame(t);
-}, true);
+}
+registerShortcut({ key: 'arrowright', shift: true, when: onDrawing, run: () => jumpDrawing(1) });
+registerShortcut({ key: 'arrowleft', shift: true, when: onDrawing, run: () => jumpDrawing(-1) });
+
+// ---------- значок и подпись слоя ----------
+registerHook('layerIcon', (L) => (isFbf(L) ? 'fbf' : null));
+registerHook('layerLabel', (L) => (isFbf(L) ? 'Покадровый' : null));
 
 addStyle(`
 .fbf-status { font-size: 12px; color: #e3d4ff; background: rgba(211,139,255,.1); border: 1px solid rgba(211,139,255,.28); border-radius: 6px; padding: 5px 8px; margin-bottom: 6px; }
