@@ -37,6 +37,7 @@ export const registry = {
     beforeCommit: [], // (label, doc) => void — нормализовать документ перед снимком истории
     layerIcon: [],    // (L) => имя иконки | null — своя иконка для конкретного слоя
     layerLabel: [],   // (L) => подпись типа | null
+    onionSkip: [],    // (activeLayer) => true — не рисовать общую луковую кожу (у модуля своя)
   },
   // Шаблоны нового проекта: { id, name, description, order, build() → doc }
   templates: [],

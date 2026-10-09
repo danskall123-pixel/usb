@@ -44,6 +44,7 @@ function templateDialog() {
     body: h('div', null,
       h('p', { class: 'muted' }, 'Текущий проект будет закрыт (сохраните его в файл, если нужен). С чего начнём?'),
       h('div', { class: 'tpl-grid' }, all.map((t) => h('button', { class: 'tpl-card', onclick: () => pick(t) },
+        (() => { try { const p = t.preview && t.preview(); return p ? h('span', { class: 'tpl-prev' }, p) : null; } catch (e) { console.error(e); return null; } })(),
         h('b', null, t.name), h('span', null, t.description || '')))),
     ),
     buttons: [{ label: 'Отмена' }],

@@ -669,6 +669,19 @@ export function initTimeline(root) {
   }, { passive: false });
 
   app.on('frame', (f) => { if (app.playing || st.mode !== 'scrub') ensureVisible(f); });
+  // выбранный слой — показать его строку
+  app.on('active', (id) => {
+    requestAnimationFrame(() => {
+      st.rows = buildRows();
+      const i = st.rows.findIndex((r) => r.id === 'L' + id);
+      if (i < 0) return;
+      const top = i * ROW, vis = H() - RULER - 6;
+      if (top < st.sy) st.sy = top;
+      else if (top + ROW > st.sy + vis) st.sy = top + ROW - vis;
+      st.sy = clamp(st.sy, 0, maxSy());
+      draw();
+    });
+  });
 
   app.registerPanel('timeline', () => {
     frameField.set(app.frame);

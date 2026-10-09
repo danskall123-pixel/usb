@@ -77,8 +77,9 @@ export function evalCh(c, f) {
     const h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
     const comp = (x0, x1, xp, xn) => {
       if (x0 === x1) return x0; // удержание: без «перелёта»
-      const m0 = kp ? (x1 - xp) / (b.f - kp.f) : 0;
-      const m1 = kn ? (xn - x0) / (kn.f - a.f) : 0;
+      // у «удержания» (соседний ключ с тем же значением) касательная нулевая — без разгона и перелёта
+      const m0 = kp && xp !== x0 ? (x1 - xp) / (b.f - kp.f) : 0;
+      const m1 = kn && xn !== x1 ? (xn - x0) / (kn.f - a.f) : 0;
       return h00 * x0 + h10 * dt * m0 + h01 * x1 + h11 * dt * m1;
     };
     if (!isArr) return comp(va, vb, kp && kp.v, kn && kn.v);

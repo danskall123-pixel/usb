@@ -129,7 +129,7 @@ export function initViewport(el) {
     ctx.fillStyle = doc.bg;
     ctx.fillRect(-doc.w / 2, -doc.h / 2, doc.w, doc.h);
     const VC = M.mul(Vd, S.cam);
-    if (app.opts.onion && !app.playing) drawOnion(VC, S);
+    if (app.opts.onion && !app.playing && !(registry.hooks.onionSkip || []).some((fn) => { try { return fn(app.active); } catch (e) { return false; } })) drawOnion(VC, S);
     ctx.setTransform(...VC);
     renderer.drawLayers(ctx, doc.layers, S, { images: app.images, px: dpr * app.view.z * Math.abs(evalCh(doc.cam.zoom, app.frame)) });
     // затемнение вне кадра камеры

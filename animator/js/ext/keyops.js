@@ -567,8 +567,7 @@ export function applyHold(ws, f) {
   return { n, out };
 }
 
-function runHold() {
-  const f = app.frame;
+function runHold(f = app.frame) {
   if (f <= 0) { app.toast('Перейдите на кадр, до которого поза должна оставаться неподвижной, и повторите', 3500); return; }
   const ws = workSet();
   if (noKeys(ws)) return;
@@ -623,7 +622,7 @@ function runSimplify() {
 }
 
 // ---------- плавность ----------
-const EASES = [['smooth', 'Плавная'], ['linear', 'Линейная'], ['ease', 'Вход-выход'], ['bounce', 'Отскок'], ['elastic', 'Упругая'], ['step', 'Ступенчатая']];
+const EASES = [['smooth', 'Плавная'], ['linear', 'Линейная'], ['ease', 'Вход/выход'], ['bounce', 'Отскок'], ['elastic', 'Упругая'], ['step', 'Ступенчатая']];
 
 function currentInterp(ws) {
   let cur = null;
@@ -652,18 +651,18 @@ function runInterp(id) {
 }
 
 // ---------- пункты меню ----------
-function items() {
+function items(fr = app.frame) {
   const ws = workSet();
   const sel = ws && ws.mode === 'sel';
   const cur = ws && ws.W.size ? currentInterp(ws) : null;
-  const f = app.frame;
+  const f = fr;
   return [
     { label: 'Повторить…', icon: 'krepeat', action: () => repeatDialog() },
     { label: 'Зациклить до конца сцены', icon: 'loop', action: loopToEnd },
     { label: 'Растянуть / сжать время…', icon: 'kstretch', action: stretchDialog },
     { label: 'Обратить (задом наперёд)', icon: 'kreverse', action: runReverse },
     { label: 'Сдвинуть на N кадров…', icon: 'kshift', action: shiftDialog },
-    { label: `Удержать позу на текущем кадре${f > 0 ? ' (' + f + ')' : ''}`, icon: 'khold', action: runHold },
+    { label: f === app.frame ? `Удержать позу на текущем кадре${f > 0 ? ' (' + f + ')' : ''}` : `Удержать позу на кадре ${f}`, icon: 'khold', action: () => runHold(f) },
     { label: 'Упростить ключи', icon: 'ksimplify', action: runSimplify },
     { label: sel ? 'Плавность для выделенных' : 'Плавность для ключей слоя', icon: 'graph', sub: EASES.map(([id, name]) => ({ label: name, checked: cur === id, action: () => runInterp(id) })) },
   ];
@@ -675,7 +674,7 @@ function title() {
   return 'Для: ' + ws.what;
 }
 
-registerTimelineMenu(() => [{ title: title() }, ...items()]);
+registerTimelineMenu((ctx) => [{ title: title() }, ...items(ctx && ctx.frame > 0 ? ctx.frame : app.frame)]);
 registerMenu('Анимация', () => [{ label: 'Операции с ключами', icon: 'krepeat', sub: [{ title: title() }, ...items()] }]);
 
 // Подменю у нижнего края экрана (таймлайн) уходит за экран: ядро сдвигает его только по горизонтали.
