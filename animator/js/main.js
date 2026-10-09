@@ -29,7 +29,16 @@ async function cmdNew() {
 
 // Выбор шаблона нового проекта (шаблоны регистрируют модули расширений)
 function templateDialog() {
-  const all = [{ id: 'empty', name: 'Пустой проект', description: 'Чистый лист с одним векторным слоем', build: null }, ...registry.templates];
+  const blank = () => {
+    const c = h('canvas', { width: 320, height: 180 });
+    const g = c.getContext('2d');
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 320, 180);
+    g.strokeStyle = '#c9ced6'; g.setLineDash([6, 5]); g.lineWidth = 2; g.strokeRect(14, 14, 292, 152);
+    g.setLineDash([]); g.strokeStyle = '#4c9dff'; g.lineWidth = 4; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(112, 112); g.bezierCurveTo(132, 60, 168, 132, 206, 72); g.stroke();
+    return c;
+  };
+  const all = [{ id: 'empty', name: 'Пустой проект', description: 'Чистый лист с одним векторным слоем', build: null, preview: blank }, ...registry.templates];
   let d = null;
   const pick = (t) => {
     d.close();

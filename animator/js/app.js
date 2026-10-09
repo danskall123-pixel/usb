@@ -66,12 +66,7 @@ export const app = {
     if (!keepView) this.frame = this.doc.start > 0 && this.idx.list.length ? this.doc.start : 0;
     this.activeId = null;
     this.clearSel();
-    // активный слой — верхний видимый незаблокированный (не фон и не звук), лучше векторный
-    const top = [];
-    const walk = (arr, lockedUp) => { for (let i = arr.length - 1; i >= 0; i--) { const L = arr[i]; const lk = lockedUp || L.lock; if (!lk && L.vis && L.type !== 'audio') top.push(L); if (L.children) walk(L.children, lk); } };
-    walk(this.doc.layers, false);
-    const first = top.find((L) => L.type === 'vector') || top[0] || this.idx.list[0];
-    if (first) this.activeId = first.id;
+    this.activeId = this.defaultActive();
     this.history.reset(snapshot(this.doc));
     invalidateWeights();
     this.images = new Map();
@@ -85,6 +80,15 @@ export const app = {
     this.render();
   },
 
+  // верхний видимый незаблокированный слой (не фон и не звук), лучше векторный
+  defaultActive() {
+    const top = [];
+    const walk = (arr, lockedUp) => { for (let i = arr.length - 1; i >= 0; i--) { const L = arr[i]; const lk = lockedUp || L.lock; if (!lk && L.vis && L.type !== 'audio') top.push(L); if (L.children) walk(L.children, lk); } };
+    walk(this.doc.layers, false);
+    const first = top.find((L) => L.type === 'vector') || top[0] || this.idx.list[0];
+    return first ? first.id : null;
+  },
+
   newDocument() {
     const d = newDoc();
     const L = newLayer(d, 'vector', 'Слой 1');
@@ -94,7 +98,7 @@ export const app = {
 
   restructure() {
     this.idx = buildIndex(this.doc);
-    if (this.activeId != null && !this.idx.layers.has(this.activeId)) this.activeId = this.idx.list[0] ? this.idx.list[0].id : null;
+    if (this.activeId != null && !this.idx.layers.has(this.activeId)) this.activeId = this.defaultActive();
     for (const id of [...this.sel.pts]) if (!this.idx.points.has(id)) this.sel.pts.delete(id);
     for (const id of [...this.sel.paths]) if (!this.idx.paths.has(id)) this.sel.paths.delete(id);
     for (const id of [...this.sel.bones]) if (!this.idx.bones.has(id)) this.sel.bones.delete(id);
@@ -127,6 +131,7 @@ export const app = {
     this.restructure();
     invalidateWeights();
     this.fixTool();
+    this.emit('restore');
     this.refresh();
     this.render();
   },
@@ -181,7 +186,9 @@ export const app = {
   // ----- слои -----
   insertLayer(L, { inside = true } = {}) {
     const A = this.active;
-    if (A && inside && A.children) {
+    // внутрь вставляем только в обычную группу; в персонажа (кости) и переключатель — лишь части рисунка
+    const nest = A && inside && A.children && (A.type === 'group' || (['bone', 'switch'].includes(A.type) && ['vector', 'group', 'image', 'bone'].includes(L.type)));
+    if (nest) {
       A.children.push(L);
       A.open = true;
     } else if (A) {

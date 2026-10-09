@@ -14,6 +14,7 @@ import { setTool } from '../panels.js';
 import { layerBox, placeFrame } from '../tools.js';
 
 registerIcon('library', '<rect x="3" y="3.5" width="7.5" height="7.5" rx="1.5"/><circle cx="17.2" cy="7.2" r="3.8"/><path d="M6.8 13.5l4 7h-8z"/><path d="M14 13.5h7v7h-7z"/>');
+registerIcon('lib-x', '<path d="M6 6l12 12M18 6L6 18"/>');
 registerIcon('lib-search', '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/>');
 
 // ---------- геометрия ----------
@@ -226,14 +227,14 @@ item({
   build: (d, cx) => character(d, cx, { name: 'Девочка', colors: GIRL, extra: girlExtra }),
 });
 item({
-  id: 'kid-wave', stand: true, cat: 'chars', kind: 'char', name: 'Мальчик в кепке машет', tags: 'мальчик персонаж зеленый кепка машет привет анимация готовая кости',
+  id: 'kid-wave', stand: true, cat: 'chars', kind: 'char', name: 'Мальчик машет', tags: 'мальчик в кепке персонаж зеленый кепка машет привет анимация готовая кости',
   anim: true, loop: [1, 48], thumbFrame: 14,
   build: (d, cx) => character(d, cx, { name: 'Мальчик в кепке', colors: GREEN, extra: capExtra, wave: true }),
 });
 
 // --- природа ---
 item({
-  id: 'sun', cat: 'nature', name: 'Солнце', tags: 'солнце свет небо день лето лучи',
+  id: 'sun', cat: 'nature', sky: true, name: 'Солнце', tags: 'солнце свет небо день лето лучи',
   build: (d) => vec(d, 'Солнце',
     P(d, star(0, 0, 12, 98, 70), true, style('#ffe58a', null, 0)),
     P(d, oval(0, 0, 56, 56), true, style('#ffd44d', '#f0a623', 4)),
@@ -245,7 +246,7 @@ item({
   ),
 });
 item({
-  id: 'cloud', cat: 'nature', name: 'Облако', tags: 'облако небо тучка погода',
+  id: 'cloud', cat: 'nature', sky: true, name: 'Облако', tags: 'облако небо тучка погода',
   build: (d) => vec(d, 'Облако', blob(d, [[-62, 8, 40], [-12, -20, 52], [46, -4, 42], [86, 16, 28], [0, 24, 104, 24]], '#ffffff', '#cfe2f5', 3)),
 });
 item({
@@ -310,7 +311,7 @@ item({
   ), 0, 90),
 });
 item({
-  id: 'moon', cat: 'nature', name: 'Луна', tags: 'луна месяц ночь небо полумесяц',
+  id: 'moon', cat: 'nature', sky: true, name: 'Луна', tags: 'луна месяц ночь небо полумесяц',
   build: (d) => vec(d, 'Луна',
     P(d, crescent(0, 0, 52, 24, -14, 46), true, style('#fff2b0', '#e6c65c', 4)),
   ),
@@ -571,14 +572,71 @@ function viewCenter() {
   const el = app.viewEl;
   return el ? app.toDoc(el.clientWidth / 2, el.clientHeight / 2) : [0, 0];
 }
-// Повторный клик по карточке не кладёт объект ровно поверх такого же: каждый следующий — чуть правее и ниже
-// flat — сдвигать только вбок на шаг flat (для стоящих на земле), иначе — по диагонали на 28 пикселей экрана
-function freeSpot(p, flat = 0) {
-  const S = app.scene(), tol = app.pxToDoc(3), step = flat || app.pxToDoc(28);
-  const centers = app.doc.layers.filter((X) => X.lib !== 'bg').map((X) => layerWorldPoints(S, X)).filter((pts) => pts.length).map((pts) => mid(bbox(pts)));
-  let q = p;
-  for (let n = 1; n <= 12 && centers.some((c) => Math.abs(c[0] - q[0]) < tol && Math.abs(c[1] - q[1]) < tol); n++) q = [p[0] + step * n, p[1] + (flat ? 0 : step * 0.6 * n)];
-  return q;
+// Видимая часть кадра в координатах документа (экран ∩ рамка кадра; если они не пересекаются — экран)
+function viewRect() {
+  const d = app.doc, F = [-d.w / 2, -d.h / 2, d.w / 2, d.h / 2], el = app.viewEl;
+  if (!el || !el.clientWidth) return F;
+  const a = app.toDoc(0, 0), c = app.toDoc(el.clientWidth, el.clientHeight);
+  const V = [Math.min(a[0], c[0]), Math.min(a[1], c[1]), Math.max(a[0], c[0]), Math.max(a[1], c[1])];
+  const I = [Math.max(V[0], F[0]), Math.max(V[1], F[1]), Math.min(V[2], F[2]), Math.min(V[3], F[3])];
+  return I[2] - I[0] > 40 && I[3] - I[1] > 40 ? I : V;
+}
+// Рамки объектов сцены (слоёв верхнего уровня) на текущем кадре — кроме фонов и того, что занимает почти весь кадр
+function obstacles(skip) {
+  const S = app.scene(), d = app.doc, A = d.w * d.h, out = [];
+  for (const X of d.layers) {
+    if (X === skip || X.lib === 'bg' || !X.vis || X.type === 'audio') continue;
+    const pts = layerWorldPoints(S, X);
+    if (!pts.length) continue;
+    const b = bbox(pts);
+    if ((b[2] - b[0]) * (b[3] - b[1]) > A * 0.45) continue;
+    out.push({ b, stand: X.lib === 'char' || !!X.libStand });
+  }
+  return out;
+}
+const overlap = (a, b) => Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])) * Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
+
+// Свободное место для нового объекта L: центр его содержимого рядом с p, без наложения на другие объекты,
+// в видимой части кадра. ground — линия земли (низ объекта встаёт на неё; ищем место только вбок).
+// Если свободного места нет — наименьшее наложение, а при полном — лесенка от p (не ровно поверх).
+function findSpot(L, p, { ground = null, stand = false } = {}) {
+  const b = contentBox(L), w = Math.max(1, b[2] - b[0]), hgt = Math.max(1, b[3] - b[1]);
+  const R = viewRect(), m = app.pxToDoc(12);
+  const obs = obstacles(L), gap = app.pxToDoc(6);
+  const q = [p[0], ground != null ? ground - hgt / 2 : p[1]];
+  const span = (lo, hi, size, c, step, fixed) => {
+    if (fixed) return [c];
+    const a = lo + m + size / 2, z = hi - m - size / 2;
+    if (a > z) return [(lo + hi) / 2];
+    const cc = Math.min(z, Math.max(a, c)), out = [cc];
+    for (let k = 1; k < 200; k++) {
+      const u = cc - k * step, v = cc + k * step;
+      if (u < a && v > z) break;
+      if (u >= a) out.push(u);
+      if (v <= z) out.push(v);
+    }
+    return out;
+  };
+  const step = Math.max(app.pxToDoc(10), Math.min(w, hgt) * 0.2);
+  const xs = span(R[0], R[2], w, q[0], step, false), ys = span(R[1], R[3], hgt, q[1], step, ground != null);
+  const RW = R[2] - R[0], RH = R[3] - R[1], area = w * hgt;
+  let best = null;
+  for (const x of xs) for (const y of ys) {
+    const c = [x - w / 2 - gap, y - hgt / 2 - gap, x + w / 2 + gap, y + hgt / 2 + gap];
+    let ov = 0;
+    for (const o of obs) ov += overlap(c, o.b);
+    // ближе к желаемой точке; стоящие на земле предпочитают сдвиг вбок, а не вверх-вниз
+    const sc = (ov / area) * 10 + Math.hypot((x - q[0]) / RW, ((y - q[1]) / RH) * (stand ? 3 : 1));
+    if (!best || sc < best.sc) best = { x, y, sc, ov: ov / area };
+  }
+  let r = best ? [best.x, best.y] : q;
+  if (best && best.ov > 0.9) {
+    // всё занято — хотя бы не ровно поверх: лесенкой от желаемой точки
+    const tol = app.pxToDoc(3), d = app.pxToDoc(28), centers = obs.map((o) => mid(o.b));
+    r = q;
+    for (let n = 1; n <= 12 && centers.some((c) => Math.abs(c[0] - r[0]) < tol && Math.abs(c[1] - r[1]) < tol); n++) r = [q[0] + d * n, q[1] + (ground != null ? 0 : d * 0.6 * n)];
+  }
+  return r;
 }
 // Высота земли фона из библиотеки под точкой p (если земля видна в нижней части экрана), иначе null
 function groundAt(p) {
@@ -589,6 +647,13 @@ function groundAt(p) {
   const q = M.apply(rec.world, l[0], G.libGround);
   const sy = app.toScreen(q[0], q[1])[1], H = app.viewEl.clientHeight;
   return Number.isFinite(q[1]) && sy > H * 0.35 && sy < H * 0.98 ? q[1] : null;
+}
+// Линия, на которую ставить стоящие объекты: земля фона из библиотеки, а без него — низ уже стоящих персонажей и предметов
+function standLine(p) {
+  const g = groundAt(p);
+  if (g != null) return g;
+  const R = viewRect(), feet = obstacles(null).filter((o) => o.stand && o.b[3] > R[1] && o.b[3] < R[3] + app.pxToDoc(4)).map((o) => o.b[3]);
+  return feet.length ? Math.max(...feet) : null;
 }
 function topAncestor(L) {
   let T = L;
@@ -661,7 +726,8 @@ let ownCommit = false;
 function libCommit(label) { ownCommit = true; try { app.commit(label); } finally { ownCommit = false; } }
 
 // Только что добавленный объект: первое перетаскивание инструментом «Трансформировать слой»
-// переставляет его без анимации даже на кадре > 0 (иначе получился бы ключ)
+// переставляет его без анимации и на кадре дальше первого (на первом кадре сцены так делает сам инструмент —
+// см. placeFrame; здесь то же правило продлено на объект, который добавили посреди анимации)
 let placing = null;
 app.on('commit', () => { if (!ownCommit) placing = null; });
 app.on('docloaded', () => { placing = null; });
@@ -718,13 +784,14 @@ function insertItem(it, at = null) {
         msg = `Добавлено: Тень — под «${T.name}»`;
       }
       if (!p) {
-        // персонажи, деревья, дом… встают на землю фона из библиотеки, остальное — в центр экрана
-        p = viewCenter();
-        const g = it.stand ? groundAt(p) : null, b = g != null ? contentBox(L) : null;
-        if (b) p = [p[0], g - (b[3] - b[1]) / 2];
-        p = freeSpot(p, b ? Math.max(app.pxToDoc(28), (b[2] - b[0]) * 0.6) : 0);
+        // персонажи, деревья, дом… встают на землю фона из библиотеки (или рядом с уже стоящими), солнце и облака — в небо,
+        // остальное — к центру экрана; всё — на свободное место, не поверх других объектов
+        let c = viewCenter();
+        if (it.sky) { const R = viewRect(), b = contentBox(L); c = [c[0], R[1] + app.pxToDoc(12) + (b[3] - b[1]) / 2 + (R[3] - R[1]) * 0.04]; }
+        p = findSpot(L, c, { ground: it.stand ? standLine(c) : null, stand: !!it.stand });
       }
-      placeAt(L, p[0], p[1], it.pin);
+      if (it.stand) L.libStand = true;
+      placeAt(L, p[0], p[1], at ? it.pin : null);
       doc.layers.splice(i, 0, L);
       if (it.kind === 'char') {
         tool = 'bmanip';
@@ -791,13 +858,13 @@ registerViewportHandler({
     p.a = null;
     if (!p.moved) return;
     placing = null;
-    libCommit('Перестановка: ' + p.L.name);
-    app.toast('Объект поставлен на место — без ключа анимации. Следующие перемещения на этом кадре уже создадут ключ: так объект и оживает', 4600);
+    libCommit('Расстановка слоя');
+    app.toast('Объект переставлен (это не ключ анимации). Следующее перемещение на этом кадре уже создаст ключ — так объект и оживает.', 4600);
   },
 });
 
 // ---------- миниатюры ----------
-const TW = 168, TH = 126; // пиксели холста миниатюры (вдвое больше CSS-размера)
+const TW = 168, TH = 112; // пиксели холста миниатюры (вдвое больше CSS-размера)
 const thumbR = new Renderer();
 const tcache = new Map();
 
@@ -869,7 +936,7 @@ function pump() {
 
 // ---------- вкладка «Библиотека» ----------
 const DND = 'application/x-anim2d-library';
-const LS = 'anim2d.library.cat';
+const LS = 'anim2d.library.cat', LS_HINT = 'anim2d.library.hint';
 const norm = (s) => s.toLowerCase().replace(/ё/g, 'е');
 let ui = null;
 
@@ -879,17 +946,23 @@ function mount(el) {
   let cat = 'all';
   try { const v = localStorage.getItem(LS); if (v && (v === 'all' || CATS.some((c) => c.id === v))) cat = v; } catch (e) { /* нет доступа */ }
   const q = h('input', {
-    class: 'txt lib-q', type: 'search', placeholder: 'Найти: дерево, машина, луна…', 'aria-label': 'Поиск в библиотеке',
+    class: 'txt lib-q', type: 'search', placeholder: 'Найти: луна…', title: 'Поиск по библиотеке: дерево, машина, луна…', 'aria-label': 'Поиск в библиотеке',
     oninput: () => filter(),
     onkeydown: (e) => { if (e.key === 'Escape' && q.value) { q.value = ''; filter(); e.preventDefault(); } e.stopPropagation(); },
   });
-  const chips = h('div', { class: 'lib-chips', role: 'tablist', 'aria-label': 'Разделы библиотеки' });
-  const chipEls = [];
-  for (const c of [{ id: 'all', name: 'Все' }, ...CATS]) {
-    const b = h('button', { class: 'lib-chip', role: 'tab', onclick: () => { cat = c.id; try { localStorage.setItem(LS, cat); } catch (e) { /* нет доступа */ } filter(); } }, c.name);
-    b.dataset.cat = c.id;
-    chipEls.push(b);
-    chips.append(b);
+  // разделы — компактный список в одной строке с поиском (на невысоком экране карточкам нужно место)
+  const sel = h('select', {
+    class: 'lib-catsel', 'aria-label': 'Раздел библиотеки', title: 'Раздел библиотеки',
+    onchange: () => { cat = sel.value; try { localStorage.setItem(LS, cat); } catch (e) { /* нет доступа */ } filter(); el.scrollTop = 0; },
+  }, [{ id: 'all', name: 'Все' }, ...CATS].map((c) => h('option', { value: c.id, selected: c.id === cat }, c.name)));
+  // подсказка — один раз, пока её не закрыли (и только если по высоте есть место)
+  let hint = null;
+  let hintOff = false;
+  try { hintOff = localStorage.getItem(LS_HINT) === '1'; } catch (e) { /* нет доступа */ }
+  if (!hintOff) {
+    hint = h('div', { class: 'lib-hint' },
+      h('span', null, 'Нажмите на карточку — объект появится на холсте. Или перетащите её прямо в нужное место.'),
+      h('button', { class: 'lib-hint-x', title: 'Понятно, скрыть', 'aria-label': 'Скрыть подсказку', onclick: () => { hint.remove(); try { localStorage.setItem(LS_HINT, '1'); } catch (e) { /* нет доступа */ } } }, icon('lib-x', 11)));
   }
   const partsNote = h('div', { class: 'lib-note' });
   const empty = h('div', { class: 'lib-empty', hidden: true }, 'Ничего не найдено. Попробуйте другое слово или раздел «Все».');
@@ -902,8 +975,8 @@ function mount(el) {
       const cv = h('canvas', { class: 'lib-thumb', width: TW, height: TH, 'aria-hidden': 'true' });
       const tip = it.kind === 'bg' ? 'Нажмите — фон на весь кадр (встанет в самый низ)'
         : it.kind === 'part' ? 'Нажмите — прикрепить к голове персонажа (выбранного или единственного). Или перетащите прямо на лицо'
-          : it.stand ? 'Нажмите — добавить на холст (на фоне из библиотеки встанет на землю). Или перетащите в нужное место'
-            : 'Нажмите — добавить в центр экрана. Или перетащите в нужное место';
+          : it.stand ? 'Нажмите — добавить на свободное место (на фоне из библиотеки встанет на землю). Или перетащите в нужное место'
+            : 'Нажмите — добавить на свободное место холста. Или перетащите в нужное место';
       const btn = h('button', { class: 'lib-card', draggable: 'true', title: it.name + '\n' + tip + (it.anim ? '\nС готовой анимацией — наведите, чтобы посмотреть' : ''), 'data-item': it.id },
         cv, h('span', { class: 'lib-name' }, it.name),
         it.anim ? h('span', { class: 'lib-badge', title: 'С готовой анимацией' }, icon('play', 9)) : null,
@@ -932,12 +1005,15 @@ function mount(el) {
   }
   el.classList.add('lib-tab');
   el.append(
-    h('div', { class: 'lib-top' },
-      h('div', { class: 'lib-qwrap' }, icon('lib-search', 15, 'lib-qic'), q),
-      chips,
-      h('div', { class: 'lib-hint' }, 'Нажмите на карточку — объект появится на холсте. Или перетащите её прямо в нужное место.')),
-    list, empty,
+    h('div', { class: 'lib-top' }, h('div', { class: 'lib-qwrap' }, icon('lib-search', 14, 'lib-qic'), q), sel),
+    hint, list, empty,
   );
+  // подсказка видна, только когда вкладка достаточно высокая: на невысоком экране место — карточкам
+  if (hint && typeof ResizeObserver === 'function') {
+    const fit = () => { if (el.clientHeight) hint.hidden = el.clientHeight < 480; };
+    new ResizeObserver(fit).observe(el);
+    fit();
+  }
   function filter() {
     stopAnim();
     const words = norm(q.value.trim()).split(/\s+/).filter(Boolean);
@@ -953,7 +1029,8 @@ function mount(el) {
       any = any || n > 0;
     }
     empty.hidden = any;
-    for (const b of chipEls) { const on = b.dataset.cat === cat; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); }
+    if (sel.value !== cat) sel.value = cat;
+    sel.classList.toggle('on', cat !== 'all');
   }
   ui = { cards, partsNote, bgKey: app.doc.w + 'x' + app.doc.h, q, filter };
   filter();
@@ -1085,6 +1162,7 @@ function addTo(d, list, id, x, y, sc = 1) {
   const same = list.filter((X) => X.name === L.name || X.name.startsWith(L.name + ' ')).length;
   if (same) L.name += ' ' + (same + 1);
   if (sc !== 1) L.scl.k[0].v = [sc, sc];
+  if (byId.get(id).stand) L.libStand = true;
   placeAt(L, x, y);
   list.push(L);
   return L;
@@ -1113,7 +1191,7 @@ function tplCharacter() {
   rig.pos.k[0].v = [0, feet - 216];
   out.push(rig);
   drawLayer(d);
-  tplActive = { doc: d, id: rig.id, hint: 'Это персонаж на костях: тяните руки, ноги и голову (инструмент «Управление костями», Z) на разных кадрах — анимация готова. Пробел — просмотр.' };
+  tplActive = { doc: d, id: rig.id, tool: 'bmanip', hint: 'Это персонаж на костях: тяните руки, ноги и голову (инструмент «Управление костями», Z) на разных кадрах — анимация готова. Пробел — просмотр.' };
   return d;
 }
 
@@ -1167,13 +1245,37 @@ function tplNight() {
   tint(house, 0.45, (q) => wins.has(q));
   for (const [x, y, s] of [[hw * 0.3, hh * 0.38, 0.95], [hw * 0.5, hh * 0.46, 1.2], [hw * 0.74, hh * 0.4, 0.9]]) tint(addTo(d, out, 'fir', x, y, s), 0.55);
   const draw = drawLayer(d);
-  tplActive = { doc: d, id: draw.id, hint: 'Звёзды уже мерцают — нажмите Пробел. Луну, облака и персонажей можно добавить из «Библиотеки».' };
+  tplActive = { doc: d, id: draw.id, hint: 'Звёзды уже мерцают — нажмите Пробел, чтобы посмотреть. Персонажей и другие предметы добавляйте из вкладки «Библиотека».' };
   return d;
 }
 
-registerTemplate({ id: 'lib-character', order: 10, name: 'Персонаж на лугу', description: 'Летний луг, солнце, облака и персонаж на костях — сразу можно оживлять', build: tplCharacter });
-registerTemplate({ id: 'lib-landscape', order: 11, name: 'Пейзаж', description: 'Горы, деревья и плывущие облака. Персонажей добавите из «Библиотеки»', build: tplLandscape });
-registerTemplate({ id: 'lib-night', order: 12, name: 'Ночная сцена', description: 'Звёздное небо с луной и домик с горящими окнами', build: tplNight });
+// Миниатюра шаблона для диалога «Новый проект»: тот же рендер, что у карточек библиотеки (рисуется один раз)
+function tplPreview(build) {
+  let src = null;
+  return () => {
+    if (!src) {
+      const keep = tplActive;
+      let d;
+      try { d = build(); } finally { tplActive = keep; } // сборка для картинки не должна менять активный слой следующего открытия
+      const W = 320, H = 180, s = Math.max(W / d.w, H / d.h);
+      src = document.createElement('canvas');
+      src.width = W; src.height = H;
+      const ctx = src.getContext('2d');
+      ctx.setTransform(s, 0, 0, s, W / 2, H / 2);
+      ctx.fillStyle = d.bg || '#ffffff';
+      ctx.fillRect(-d.w / 2, -d.h / 2, d.w, d.h);
+      thumbR.drawLayers(ctx, d.layers, evaluate(d, Math.max(1, d.start)), { images: app.images, px: s });
+    }
+    const cv = document.createElement('canvas');
+    cv.width = src.width; cv.height = src.height;
+    cv.getContext('2d').drawImage(src, 0, 0);
+    return cv;
+  };
+}
+
+registerTemplate({ id: 'lib-character', order: 10, name: 'Персонаж на лугу', description: 'Летний луг, солнце, облака и персонаж на костях — сразу можно оживлять', build: tplCharacter, preview: tplPreview(tplCharacter) });
+registerTemplate({ id: 'lib-landscape', order: 11, name: 'Пейзаж', description: 'Горы, деревья и плывущие облака. Персонажей добавите из «Библиотеки»', build: tplLandscape, preview: tplPreview(tplLandscape) });
+registerTemplate({ id: 'lib-night', order: 12, name: 'Ночная сцена', description: 'Звёздное небо с луной, мерцающие звёзды и домик с горящими окнами', build: tplNight, preview: tplPreview(tplNight) });
 
 registerHook('docLoaded', (doc) => {
   const t = tplActive;
@@ -1182,6 +1284,7 @@ registerHook('docLoaded', (doc) => {
   app.activeId = t.id;
   app.clearSel();
   app.fixTool();
+  if (t.tool && app.tool !== t.tool) setTool(t.tool);
   if (t.hint) setTimeout(() => app.toast(t.hint, 6500), 700);
 });
 
@@ -1190,31 +1293,32 @@ app.library = { items: ITEMS, categories: CATS, insert: (id, at) => insertItem(b
 
 addStyle(`
 .lib-tab { padding-top: 0; }
-.lib-top { position: sticky; top: 0; z-index: 2; background: var(--bg1); padding: 8px 0 4px; border-bottom: 1px solid var(--line); margin-bottom: 2px; }
-.lib-qwrap { position: relative; display: flex; }
-.lib-q { width: 100%; padding-left: 28px; }
+.lib-top { position: sticky; top: 0; z-index: 2; display: flex; gap: 5px; background: var(--bg1); padding: 6px 0 4px; }
+.lib-qwrap { position: relative; display: flex; flex: 1; min-width: 0; }
+.lib-q { width: 100%; min-width: 0; padding-left: 26px; }
 .lib-qic { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: var(--text3); pointer-events: none; }
-.lib-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
-.lib-chip { padding: 2px 9px; border-radius: 11px; border: 1px solid var(--line2); background: var(--bg2); color: var(--text2); font-size: 11.5px; line-height: 18px; }
-.lib-chip:hover { color: var(--text); background: var(--bg3); }
-.lib-chip.on { background: var(--accent-bg); color: var(--accent); border-color: rgba(76,157,255,.45); }
-.lib-hint { color: var(--text3); font-size: 11.5px; margin: 6px 0 2px; }
-@media (max-height: 940px) { .lib-top { position: static; } } /* на невысоком экране шапка не закрывает карточки */
-.lib-cat { margin-top: 10px; }
+.lib-catsel { flex: none; width: auto; max-width: 112px; color: var(--text2); }
+.lib-catsel.on { color: var(--accent); border-color: rgba(76,157,255,.45); }
+.lib-hint { display: flex; align-items: flex-start; gap: 6px; color: var(--text3); font-size: 11.5px; line-height: 1.35; margin: 1px 0 2px; }
+.lib-hint[hidden] { display: none; }
+.lib-hint > span { flex: 1; }
+.lib-hint-x { flex: none; display: inline-flex; padding: 2px; border: 0; border-radius: 4px; background: none; color: var(--text3); }
+.lib-hint-x:hover { color: var(--text); background: var(--bg3); }
+.lib-cat { margin-top: 4px; }
 .lib-cat[hidden], .lib-card[hidden] { display: none; }
-.lib-cat .insp-title { margin-bottom: 6px; }
+.lib-cat .insp-title { margin-bottom: 4px; }
 .lib-note { color: var(--text3); font-size: 11.5px; margin: -2px 0 7px; }
 .lib-note b { color: var(--accent); font-weight: 600; }
-.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 6px; }
-.lib-card { position: relative; display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 4px 4px 5px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg2); color: var(--text); text-align: center; cursor: grab; transition: border-color .12s, background-color .12s; }
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 5px; }
+.lib-card { position: relative; display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 3px 3px 4px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg2); color: var(--text); text-align: center; cursor: grab; transition: border-color .12s, background-color .12s; }
 .lib-card:hover { border-color: var(--accent); background: #26354a; }
 .lib-card:active { cursor: grabbing; }
 .lib-card.flash { animation: lib-flash .5s ease-out; }
 @keyframes lib-flash { 0% { transform: scale(.93); border-color: #7fd36b; box-shadow: 0 0 0 3px rgba(127,211,107,.35); } 100% { transform: none; } }
-.lib-thumb { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; border-radius: 4px; background: linear-gradient(#f1f6fb, #d8e4ef); }
-.lib-name { font-size: 11.5px; line-height: 1.2; min-height: 2.4em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-.lib-badge { position: absolute; top: 7px; right: 7px; display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; border-radius: 50%; background: rgba(23,24,27,.78); color: #7fd36b; pointer-events: none; }
-.lib-plus { position: absolute; top: 7px; left: 7px; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent2); color: #fff; opacity: 0; transition: opacity .12s; pointer-events: none; }
+.lib-thumb { display: block; width: 100%; height: auto; aspect-ratio: 3 / 2; border-radius: 4px; background: linear-gradient(#f1f6fb, #d8e4ef); }
+.lib-name { font-size: 11px; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.lib-badge { position: absolute; top: 6px; right: 6px; display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; border-radius: 50%; background: rgba(23,24,27,.78); color: #7fd36b; pointer-events: none; }
+.lib-plus { position: absolute; top: 6px; left: 6px; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent2); color: #fff; opacity: 0; transition: opacity .12s; pointer-events: none; }
 .lib-card:hover .lib-plus, .lib-card:focus-visible .lib-plus { opacity: 1; }
 .lib-empty { padding: 24px 8px; text-align: center; color: var(--text3); }
 #viewport.lib-drop::after { content: 'Отпустите, чтобы добавить сюда'; position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 16px; border: 2px dashed var(--accent); background: rgba(76,157,255,.06); color: var(--accent); font-weight: 600; pointer-events: none; }

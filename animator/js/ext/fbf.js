@@ -815,11 +815,11 @@ function fbfSection(L, { sec, row, upd, numField, checkField }) {
 registerInspector({ id: 'fbf', order: 5, when: (L) => !!fbfOf(L), build: fbfSection });
 
 // ---------- меню, таймлайн, шаблон ----------
+// «+» в панели «Слои» и «Слой → Новый слой»
+registerMenu('Новый слой', () => [{ label: 'Покадровая анимация', icon: 'fbf', action: createFbf }]);
 registerMenu('Слой', () => {
   const A = app.active;
-  const items = [{ label: 'Новый покадровый слой', icon: 'fbf', action: createFbf }];
-  if (A && A.type === 'vector' && !fbfOf(A)) items.push({ label: 'Сделать покадровым (рисунок 1)', icon: 'fbf', action: () => convertToFbf(A) });
-  return items;
+  return A && A.type === 'vector' && !fbfOf(A) ? [{ label: 'Сделать покадровым (рисунок 1)', icon: 'fbf', action: () => convertToFbf(A) }] : [];
 });
 registerMenu('Анимация', () => {
   const F = fbfOf(app.active);
@@ -858,6 +858,28 @@ registerTemplate({
     d._fbfStart = true;
     return d;
   },
+  // миниатюра: прыгающий мячик — текущий рисунок и два предыдущих луковой кожей
+  preview() {
+    const c = h('canvas', { width: 192, height: 108 }), ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, 192, 108);
+    ctx.lineCap = ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#c9ccd2';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(14, 92); ctx.lineTo(178, 92); ctx.stroke();
+    const ball = (x, y, rx, ry, col, a) => {
+      ctx.globalAlpha = a;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); ctx.stroke();
+    };
+    ball(48, 34, 13, 13, ONION_BEFORE, 0.35);
+    ball(84, 62, 12, 14, ONION_BEFORE, 0.6);
+    ball(120, 78, 16, 11, '#1d1f24', 1);
+    ball(154, 50, 13, 13, ONION_AFTER, 0.45);
+    ctx.globalAlpha = 1;
+    return c;
+  },
 });
 
 registerHook('docLoaded', (doc) => {
@@ -888,9 +910,9 @@ registerHook('docLoaded', (doc) => {
 // ---------- горячие клавиши (только когда выбран покадровый слой или его рисунок) ----------
 const inFbf = () => !!fbfOf(app.active);
 const withF = (fn) => () => { const F = fbfOf(app.active); if (F) fn(F); };
-registerShortcut({ key: 'n', when: inFbf, run: withF((F) => addFrame(F, 'blank')), label: 'Покадровая анимация: новый рисунок через «шаг»' });
-registerShortcut({ key: 'n', shift: true, when: inFbf, run: withF((F) => addFrame(F, 'copy')), label: 'Покадровая анимация: копия текущего рисунка' });
-registerShortcut({ key: 'b', when: inFbf, run: withF((F) => addFrame(F, 'empty')), label: 'Покадровая анимация: пустой кадр' });
+registerShortcut({ key: 'n', when: inFbf, run: withF((F) => addFrame(F, 'blank')), keyLabel: 'N', label: 'Покадровая анимация: новый рисунок через «шаг»' });
+registerShortcut({ key: 'n', shift: true, when: inFbf, run: withF((F) => addFrame(F, 'copy')), keyLabel: 'N', label: 'Покадровая анимация: копия текущего рисунка' });
+registerShortcut({ key: 'b', when: inFbf, run: withF((F) => addFrame(F, 'empty')), keyLabel: 'B', label: 'Покадровая анимация: пустой кадр' });
 registerShortcut({ key: 'enter', when: inFbf, run: withF((F) => stepFrame(F, 1)), keyLabel: 'Enter', label: 'Покадровая анимация: следующий шаг' });
 registerShortcut({ key: 'enter', shift: true, when: inFbf, run: withF((F) => stepFrame(F, -1)), keyLabel: 'Enter', label: 'Покадровая анимация: предыдущий шаг' });
 
@@ -903,12 +925,20 @@ function jumpDrawing(dir) {
   const t = dir > 0 ? frames.find((x) => x > f) : [...frames].reverse().find((x) => x < f);
   if (t != null) app.setFrame(t);
 }
-registerShortcut({ key: 'arrowright', shift: true, when: onDrawing, run: () => jumpDrawing(1) });
+// в справке F1 — одной строкой «Shift+← / →»
+registerShortcut({ key: 'arrowright', shift: true, when: onDrawing, run: () => jumpDrawing(1), keyLabel: '← / →', label: 'Покадровая анимация: предыдущий / следующий рисунок' });
 registerShortcut({ key: 'arrowleft', shift: true, when: onDrawing, run: () => jumpDrawing(-1) });
 
 // ---------- значок и подпись слоя ----------
 registerHook('layerIcon', (L) => (isFbf(L) ? 'fbf' : null));
 registerHook('layerLabel', (L) => (isFbf(L) ? 'Покадровый' : null));
+
+// Общая луковая кожа (Анимация → Луковая кожа) поверх своей дала бы двойные призраки — пока выбран
+// покадровый слой и включена луковая кожа рисунков, показываем только её
+registerHook('onionSkip', (A) => {
+  const F = fbfOf(A);
+  return !!F && F.vis && O.fbfOnion && O.fbfBefore + O.fbfAfter > 0;
+});
 
 addStyle(`
 .fbf-status { font-size: 12px; color: #e3d4ff; background: rgba(211,139,255,.1); border: 1px solid rgba(211,139,255,.28); border-radius: 6px; padding: 5px 8px; margin-bottom: 6px; }

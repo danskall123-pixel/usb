@@ -7,6 +7,8 @@ import { icon, registerIcon } from '../icons.js';
 import { registry, registerSideTab, registerMenubarButton, registerMenu, registerHook, addStyle } from '../ext.js';
 import { tools } from '../tools.js';
 import { dialog, closeMenu, checkField } from '../ui.js';
+import { descendants, layerOwnChannels } from '../model.js';
+import { evalCh, keyIndex } from '../anim.js';
 
 registerIcon('rocket', '<path d="M12 15l-3-3c1.6-4.6 5.4-8.6 12-9-.4 6.6-4.4 10.4-9 12z"/><circle cx="15" cy="9" r="1.7"/><path d="M9 12H5l2.5-3.5h4M12 15v4l3.5-2.5v-4"/><path d="M6.5 16.5C5 17.5 4.5 19.5 4.5 19.5s2-.5 3-2"/>');
 
@@ -85,7 +87,6 @@ function manualKeys() {
 
 function togglePlay() {
   app.emit('toggleplay');
-  if (app.playing) markDone('play');
 }
 
 function exportVideo(fmt) {
@@ -116,7 +117,8 @@ function welcome() {
         h('div', { class: 'gd-hero-ic' }, icon('rocket', 30)),
         h('div', null,
           h('b', null, 'Мультик — это просто!'),
-          h('p', null, 'Нарисуйте героя, оживите его в один клик и сохраните видео. Сейчас открыт пример — персонаж на костях, его можно сразу подвигать.'),
+          h('p', null, 'Нарисуйте героя, оживите его в один клик и сохраните видео.',
+            app.doc && /^Пример/.test(app.doc.name || '') ? ' Сейчас открыт пример — персонаж на костях, его можно сразу подвигать.' : ''),
         ),
       ),
       h('div', { class: 'gd-choices' },
@@ -150,6 +152,7 @@ function welcome() {
 registerHook('firstRun', () => {
   if (!lsGet('anim2d.guide.welcome')) { welcome(); return; }
   if (app.opts.simple && hasTab('start') && app.showSideTab) app.showSideTab('start');
+  if (tipsOff()) return; // «Я уже умею» — без подсказок
   app.toast('Это пример: тяните кости инструментом «Управление костями» (Z), Пробел — воспроизведение. План «мультик за 3 шага» — во вкладке «Старт».', 6500);
 });
 
@@ -202,7 +205,7 @@ const STEPS = [
   },
   {
     id: 'start', el: () => q('.side-tab[title="Старт"]'), pad: 4, title: 'Вкладка «Старт»',
-    text: () => ['Здесь всегда под рукой план «мультик за 3 шага» — с кнопками, которые всё сделают за вас. ',
+    text: () => ['Значок с ракетой — здесь всегда под рукой план «мультик за 3 шага» с кнопками, которые всё сделают за вас. ',
       'Справка — ', k('F1'), '. Удачи!'],
   },
 ];
@@ -303,8 +306,11 @@ function endTour(reason) {
   T = null;
   lsSet('anim2d.guide.tour', '1');
   if (reason === 'done') {
-    if (hasTab('start') && app.showSideTab) app.showSideTab('start');
-    app.toast('Готово! План «мультик за 3 шага» — во вкладке «Старт» справа', 4200);
+    const side = q('#side');
+    if (hasTab('start') && app.showSideTab && side && side.offsetWidth) {
+      app.showSideTab('start');
+      app.toast('Готово! План «мультик за 3 шага» — во вкладке «Старт» справа', 4200);
+    } else app.toast('Готово! Удачи! Справка — клавиша F1', 3200); // узкое окно: правой панели не видно
   } else if (reason === 'skip') {
     if (first && hasTab('start') && app.showSideTab) app.showSideTab('start');
     app.toast('Тур можно повторить: «Справка» → «Обучение»', 3000);
@@ -470,9 +476,8 @@ registerHook('docLoaded', () => {
   if (app.opts.simple && app.showSideTab) setTimeout(() => hasTab('start') && app.showSideTab('start'), 0);
 });
 
-app.on('toggleplay', () => renderTab());
-app.on('stop', () => renderTab());
-app.on('frame', () => { if (tabSig.endsWith('|true') && !app.playing) renderTab(); });
+// любое воспроизведение (кнопка, Пробел, вкладка) — шаг «Посмотрите» выполнен; кнопка Смотреть/Пауза следует за состоянием
+app.on('playstate', (on) => { if (on) markDone('play'); renderTab(); checkTip(); });
 
 // =====================================================================
 // Кнопка «Простой режим» в верхней панели
@@ -488,7 +493,8 @@ function syncMb() {
 }
 registerMenubarButton(() => {
   mbBtn = h('button', { class: 'gd-mb', onclick: () => setSimple(!app.opts.simple) },
-    h('span', { class: 'gd-sw', 'aria-hidden': 'true' }), h('span', { class: 'gd-mb-l' }, 'Простой режим'));
+    h('span', { class: 'gd-sw', 'aria-hidden': 'true' }), h('span', { class: 'gd-mb-l' }, 'Простой режим'), h('span', { class: 'gd-mb-s' }, 'Просто'));
+  mbBtn.setAttribute('aria-label', 'Простой режим');
   syncMb();
   return mbBtn;
 });
@@ -507,73 +513,176 @@ registerMenu('Справка', () => [
 // =====================================================================
 // Разовые подсказки по ходу работы (каждая — один раз, хранятся в браузере)
 // =====================================================================
-let lastTipAt = 0;
-function tip(id, text, ms = 7000) {
+// still() — подсказка ещё к месту (тот же слой/кадр…). Отложенная подсказка без него не показывается,
+// а уже показанная убирается, как только пользователь ушёл дальше.
+let lastTipAt = 0, queue = [], qTimer = 0, shown = [];
+const tipBusy = () => !!T || !!q('.modal-back') || performance.now() - lastTipAt < 3500;
+
+function tip(id, text, { ms = 7000, still = null } = {}) {
   const s = tipsState();
   if (s.off || s[id]) return false;
-  if (T || q('.modal-back') || performance.now() - lastTipAt < 3500) return false; // показать в другой раз
+  if (still && !still()) return false;
+  if (tipBusy()) { // показать чуть позже, если ещё будет к месту
+    queue = queue.filter((x) => x.id !== id).concat({ id, text, ms, still, at: performance.now() }).slice(-3);
+    pumpTips();
+    return false;
+  }
+  showTip(id, text, ms, still);
+  return true;
+}
+
+function showTip(id, text, ms, still) {
+  const s = tipsState();
   s[id] = 1;
   saveTips(s);
   lastTipAt = performance.now();
-  app.toast(h('span', { class: 'gd-tip' }, h('b', null, 'Подсказка. '), text), ms);
-  return true;
+  const span = h('span', { class: 'gd-tip' }, h('b', null, 'Подсказка. '), text,
+    h('button', { class: 'gd-tip-x', title: 'Скрыть подсказку', 'aria-label': 'Скрыть подсказку', onclick: () => hideTip(span) }, '✕'));
+  app.toast(span, ms);
+  shown.push({ id, span, still, at: performance.now() });
+}
+
+// отметить подсказку как уже не нужную (пользователь сам сделал то, о чём она)
+function tipSeen(id) {
+  const s = tipsState();
+  queue = queue.filter((x) => x.id !== id);
+  if (!s[id]) { s[id] = 1; saveTips(s); }
+}
+
+function hideTip(span) {
+  shown = shown.filter((x) => x.span !== span);
+  const t = span && span.closest('.toast');
+  if (!t || t.classList.contains('out')) return;
+  t.classList.add('out');
+  setTimeout(() => t.remove(), 300);
+}
+
+// показанная подсказка устарела (другой слой, кадр, началось воспроизведение…) — убрать её
+function checkTip() {
+  for (const x of shown.slice()) {
+    if (!x.span.isConnected) { shown = shown.filter((y) => y !== x); continue; }
+    let ok = true;
+    try { ok = !x.still || !!x.still(); } catch (e) { ok = false; }
+    if (ok) continue;
+    hideTip(x.span);
+    // мелькнула и сразу устарела — её толком не прочли: пусть покажется в следующий раз
+    if (performance.now() - x.at < 1500) { const s = tipsState(); delete s[x.id]; saveTips(s); }
+  }
+}
+app.on('docloaded', () => checkTip());
+
+function pumpTips() {
+  if (qTimer) return;
+  qTimer = setTimeout(() => {
+    qTimer = 0;
+    const s = tipsState(), now = performance.now();
+    queue = queue.filter((x) => {
+      if (s.off || s[x.id] || now - x.at > 20000) return false;
+      try { return !x.still || !!x.still(); } catch (e) { return false; }
+    });
+    if (!queue.length) return;
+    if (tipBusy()) { pumpTips(); return; }
+    const x = queue.shift();
+    showTip(x.id, x.text, x.ms, x.still);
+    if (queue.length) pumpTips();
+  }, 1200);
+}
+
+// покадровый слой (встроенный «Переключатель» с флагом fbf) — сам слой или его рисунок
+function fbfOf(L) {
+  if (!L || !app.idx) return null;
+  if (L.type === 'switch' && L.fbf) return L;
+  const p = app.idx.parent.get(L.id);
+  return p && p.type === 'switch' && p.fbf ? p : null;
+}
+
+// После правки на кадре f у слоя (его частей или его скелета) есть ключ на f и видимое при просмотре движение:
+// значения внутри диапазона сцены где-то отличаются от первого кадра. Расстановка на первом кадре и
+// единственный ключ на первом кадре движения не дают.
+function makesMotion(A, f) {
+  if (!A || !app.doc || f > app.doc.end) return false;
+  const st = app.doc.start, en = app.doc.end;
+  const set = [A, ...descendants(A)];
+  const B = app.boneLayerFor(A);
+  if (B && !set.includes(B)) set.push(B);
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  for (const L of set) {
+    let chans = [];
+    try { chans = layerOwnChannels(L); } catch (e) { continue; }
+    for (const c of chans) {
+      if (!c || !Array.isArray(c.k) || c.k.length < 2 || keyIndex(c, f) < 0) continue;
+      const v0 = evalCh(c, st);
+      if (c.k.some((key) => key.f > st && key.f <= en && !same(evalCh(c, key.f), v0))) return true;
+    }
+  }
+  return false;
 }
 
 // переход на кадр: подсказка, если пользователь задержался на нём (не во время воспроизведения/записи/предпросмотра)
 let frameTimer = 0;
 app.on('frame', () => {
   clearTimeout(frameTimer);
+  checkTip();
   if (app.playing) return;
   frameTimer = setTimeout(() => {
     if (app.playing || app.tool === 'record' || !app.doc) return;
-    const f = app.frame;
-    if (f > 0) tip('frame', `Кадр ${f}: теперь любые изменения станут ключами анимации — ромбиками ◆ на таймлайне. Кадр 0 — поза покоя.`);
-    else tip('frame0', 'Кадр 0 — поза покоя: здесь рисуют и строят скелет. Изменения на нём действуют на весь мультик.');
+    const f = app.frame, st = app.doc.start;
+    // первый кадр сцены — расстановка, а не анимация: про ключи говорим только дальше
+    if (f > st) tip('frame', 'Это кадр анимации: всё, что вы здесь сдвинете или повернёте, станет ключом — ромбиком ◆ на таймлайне. Кадр 0 — поза покоя.',
+      { still: () => app.frame > app.doc.start && !app.playing });
+    else if (f === 0) tip('frame0', 'Кадр 0 — поза покоя: здесь рисуют и строят скелет. Изменения на нём действуют на весь мультик.',
+      { still: () => app.frame === 0 });
   }, 800);
 });
 
-// выбор слоя костей
-let lastActive = null, skipActive = true;
-app.on('docloaded', () => { skipActive = true; });
-function watchActive() {
-  const id = app.activeId;
-  if (skipActive) { skipActive = false; lastActive = id; return; }
-  if (id === lastActive) return;
-  lastActive = id;
+// выбор слоя костей пользователем (загрузка проекта событие 'active' не шлёт)
+app.on('active', (id) => {
+  checkTip();
   const L = app.active;
   if (L && L.type === 'bone') {
-    tip('bone', 'Это слой костей — скелет персонажа. Инструмент «Управление костями» (Z): тяните за кость, и персонаж двигается. На кадре больше 0 получится анимация.');
+    tip('bone', 'Это слой костей — скелет персонажа. Инструмент «Управление костями» (Z): тяните за кость, и персонаж двигается. На кадре дальше первого получится анимация.',
+      { still: () => app.activeId === id });
   }
-}
+});
 
-// завершённые действия
+// завершённые действия (метку действия ядро передаёт в событие 'commit')
 const DRAW_RE = /^(Рисование|Фигура|Заливка|Добавление точки|Новый текст|Библиотека:)/;
-const ANIM_RE = /^(Оживить:|Запись движения|Путь движения|Ходьба на месте|Промежуточная поза)/;
-const MOVE_RE = /^(Трансформация слоя|Поза костей|Перемещение точек|Трансформация точек|Перемещение фигур|Положение слоя|Поворот слоя|Масштаб слоя|Непрозрачность|Угол кости|Положение кости|Масштаб кости|Ключ на кадре|Поза «)/;
-app.on('commit', () => {
-  const H = app.history, it = H.stack[H.i];
-  const label = (it && it.label) || '';
-  const f = app.frame;
+const ANIM_RE = /^(Оживить:|Запись движения|Путь движения|Траектория|Ходьба|Промежуточная поза|Новый рисунок|Копия рисунка|Моргание|Рот болтает)/;
+const MOVE_RE = /^(Трансформация слоя|Поза костей|Перемещение точек|Трансформация точек|Перемещение фигур|Перемещение текста|Положение слоя|Поворот слоя|Масштаб слоя|Непрозрачность|Угол кости|Положение кости|Масштаб кости|Ключ на кадре|Поза «)/;
+app.on('commit', (label) => {
+  label = String(label || '');
+  const f = app.frame, A = app.active;
   if (DRAW_RE.test(label)) {
     markDone('draw');
     if (/^(Рисование|Фигура)/.test(label)) {
-      const msg = hasTab('presets') ? 'Отличный рисунок! Нажмите «✨ Оживить» вверху, чтобы анимировать его в один клик.'
-        : hasTool('record') ? 'Отличный рисунок! Чтобы оживить его, выберите «Запись движения» (J) и ведите рисунок мышью.'
-          : 'Отличный рисунок! Чтобы оживить его, перейдите на кадр 24 и сдвиньте рисунок инструментом «Трансформировать слой» (M).';
-      tip('draw', msg);
+      if (fbfOf(A)) {
+        // покадровый слой: оживляют не эффектом, а следующим рисунком
+        tip('fbfdraw', ['Отличный рисунок! Теперь нажмите ', k('N'), ' — появится чистый лист для следующего кадра, а этот рисунок будет просвечивать. Так, рисунок за рисунком, и получается мультик.'],
+          { ms: 8000, still: () => !!fbfOf(app.active) });
+      } else {
+        const msg = hasTab('presets') ? 'Отличный рисунок! Нажмите «✨ Оживить» вверху, чтобы анимировать его в один клик.'
+          : hasTool('record') ? 'Отличный рисунок! Чтобы оживить его, выберите «Запись движения» (J) и ведите рисунок мышью.'
+            : 'Отличный рисунок! Чтобы оживить его, перейдите на кадр 24 и сдвиньте рисунок инструментом «Трансформировать слой» (M).';
+        tip('draw', msg, { still: () => !app.playing });
+      }
     }
   }
-  if (ANIM_RE.test(label) || (f > 0 && MOVE_RE.test(label))) markDone('anim');
-  if (f > 0 && MOVE_RE.test(label)) tip('key', `Ключ на кадре ${f} готов. Нажмите Пробел, чтобы посмотреть движение.`);
-  else if (f === 0 && /^(Трансформация слоя|Поза костей)/.test(label)) {
-    tip('rest', 'Вы изменили позу покоя (кадр 0) — она действует на все кадры. Чтобы анимировать, сначала перейдите на другой кадр стрелкой →.');
+  const moved = f > 0 && MOVE_RE.test(label) && makesMotion(A, f);
+  if (ANIM_RE.test(label) || moved) markDone('anim');
+  // расстановку на первом кадре («Расстановка слоя») ядро объясняет само — это не ключ
+  if (moved) {
+    tipSeen('frame'); // ключ уже сделан — подсказка «это кадр анимации» больше не нужна
+    tip('key', `Ключ на кадре ${f} готов. Нажмите Пробел, чтобы посмотреть движение.`, { still: () => !app.playing });
+  } else if (f === 0 && /^(Трансформация слоя|Поза костей)/.test(label)) {
+    tip('rest', 'Вы изменили позу покоя (кадр 0) — она действует на все кадры. Чтобы анимировать, сначала перейдите на другой кадр стрелкой →.',
+      { still: () => app.frame === 0 });
   }
+  checkTip();
 });
 
 // общая синхронизация при обновлении интерфейса
 app.registerPanel('guide', () => {
   syncMb();
-  watchActive();
   renderTab();
 });
 
@@ -588,7 +697,10 @@ addStyle(`
 .gd-mb.on { color: #fff; border-color: rgba(76,157,255,.45); background: var(--accent-bg); }
 .gd-mb.on .gd-sw { background: var(--accent2); }
 .gd-mb.on .gd-sw::after { left: 14px; background: #fff; }
-@media (max-width: 1100px) { .gd-mb-l { display: none; } .gd-mb { padding: 0 7px; } }
+.gd-mb-s { display: none; }
+@media (max-width: 1100px) { .gd-mb-l { display: none; } .gd-mb-s { display: inline; } .gd-mb { gap: 6px; padding: 0 8px 0 7px; } }
+/* пока видны «Сохранить» и «Экспорт», на узком окне подпись не влезает — остаётся только переключатель с подсказкой */
+@media (max-width: 990px) and (min-width: 861px), (max-width: 720px) { .gd-mb-s { display: none; } .gd-mb { padding: 0 7px; } }
 
 .gd-welcome .gd-hero { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 14px; }
 .gd-hero-ic { width: 52px; height: 52px; border-radius: 14px; display: flex; align-items: center; justify-content: center; flex: none; color: #fff; background: linear-gradient(135deg, #4c9dff, #9b7bff); }
@@ -627,10 +739,6 @@ addStyle(`
 .gd-b-foot .gd-skip { margin-right: auto; padding-left: 0; }
 .gd-b-foot .btn:disabled { opacity: .4; cursor: default; }
 
-#side-body > #inspector[hidden] { display: none; } /* ядро: #inspector { display: block } перебивает [hidden] */
-/* ядро: колонка #side растягивалась по ширине вкладок и сдвигала весь интерфейс; вкладки переносятся во второй ряд */
-#side { grid-template-columns: minmax(0, 1fr); }
-#side .side-tabs { flex-wrap: wrap; }
 .gd-start h2 { margin: 2px 0 2px; font-size: 16px; color: #fff; }
 .gd-sub { margin: 0 0 6px; color: var(--text2); font-size: 12.5px; line-height: 1.45; }
 .gd-card { display: grid; grid-template-columns: 34px minmax(0, 1fr); column-gap: 10px; row-gap: 3px; padding: 11px 12px 12px; margin: 8px 0; border-radius: 10px; background: var(--bg2); border: 1px solid var(--line); }
@@ -657,4 +765,7 @@ addStyle(`
 .gd-tip-k { flex: none; min-width: 58px; }
 .gd-opts { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 4px; }
 .gd-tip b { color: var(--warm); font-weight: 600; }
+.gd-tip kbd { font-size: 10.5px; }
+.gd-tip-x { margin-left: 8px; padding: 0 5px; border: 0; border-radius: 4px; background: none; color: var(--text3); font-size: 11px; line-height: 18px; vertical-align: 1px; }
+.gd-tip-x:hover { background: var(--bg3); color: var(--text); }
 `, 'guide-css');

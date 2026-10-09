@@ -867,7 +867,7 @@ function updTypeFx(L) {
         const T = targetLayer();
         if (!T || T.type !== key) return;
         try { if (e.apply(T, { start: startFrame() }) !== false) flash(btn); } catch (er) { console.error(er); app.toast('Не удалось применить эффект'); }
-      } }, h('span', { class: 'pz-stage', 'aria-hidden': 'true' }, h('i', { class: 'pz-a', style: { animation: 'pz-fadein 1.8s infinite' } })), h('span', { class: 'pz-name' }, e.name), h('span', { class: 'pz-meta' }, e.meta || ''));
+      } }, e.icon ? h('span', { class: 'pz-stage', 'aria-hidden': 'true' }, icon(e.icon, 26)) : h('span', { class: 'pz-stage', 'aria-hidden': 'true' }, h('i', { class: 'pz-a', style: { animation: e.anim || 'pz-fadein 1.8s infinite' } })), h('span', { class: 'pz-name' }, e.name), h('span', { class: 'pz-meta' }, e.meta || ''));
       return btn;
     })),
   );

@@ -4,8 +4,8 @@ import { app } from '../app.js';
 import { registerSideTab, registerMenu, registerInspector, registerTimelineMenu, addStyle } from '../ext.js';
 import { registerIcon, icon } from '../icons.js';
 import { h, clamp } from '../util.js';
-import { setKey, evalCh } from '../anim.js';
-import { newDoc, layerOwnChannels, descendants } from '../model.js';
+import { setKey, evalCh, keyIndex } from '../anim.js';
+import { newDoc, layerOwnChannels, descendants, siblings } from '../model.js';
 import { evaluate, layerWorldPoints } from '../scene.js';
 import { Renderer } from '../render.js';
 import { buildCharacter } from '../demo.js';
@@ -21,13 +21,15 @@ registerIcon('ps-save', '<path d="M5 3h11l4 4v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5
 
 // ---------- настройки панели (личное удобство, хранятся в браузере) ----------
 const LS = 'anim2d.poses';
-const opt = { onlySel: false, advance: 0, cycles: '2', tempo: '24' };
+const opt = { onlySel: false, advance: 0, cycles: '2', tempo: '24', stand: true, dir: 'none' };
 try {
   const s = JSON.parse(localStorage.getItem(LS) || '{}');
   if (typeof s.onlySel === 'boolean') opt.onlySel = s.onlySel;
   if ([0, 6, 12, 24].includes(s.advance)) opt.advance = s.advance;
   if (['1', '2', '3', '4', 'end'].includes(s.cycles)) opt.cycles = s.cycles;
   if (['16', '24', '32'].includes(s.tempo)) opt.tempo = s.tempo;
+  if (typeof s.stand === 'boolean') opt.stand = s.stand;
+  if (['none', 'right', 'left'].includes(s.dir)) opt.dir = s.dir;
 } catch (e) { /* нет доступа */ }
 const saveOpt = () => { try { localStorage.setItem(LS, JSON.stringify(opt)); } catch (e) { /* нет доступа */ } };
 
@@ -40,7 +42,7 @@ const nearestAngle = (a, ref) => a + 360 * Math.round((ref - a) / 360);
 const rigOf = () => (app.doc && app.idx && app.active ? app.boneLayerFor(app.active) : null);
 const rigById = (id) => { const L = app.idx && app.idx.layers.get(id); return L && L.type === 'bone' ? L : null; };
 const bonesWord = (n) => (n % 10 === 1 && n % 100 !== 11 ? 'кость' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'кости' : 'костей');
-const cyclesWord = (n) => (n % 10 === 1 && n % 100 !== 11 ? 'цикл' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'цикла' : 'циклов');
+const stepsWord = (n) => (n % 10 === 1 && n % 100 !== 11 ? 'шаг' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'шага' : 'шагов');
 
 function selectedOf(B) {
   const s = new Set();
@@ -269,7 +271,8 @@ function safeThumb(B, f, data) {
 // Кэш миниатюр готовых поз: ключ — содержимое скелета (без сохранённых поз)
 const builtinCache = { key: '', map: new Map() };
 function builtinThumbs(B, R) {
-  const key = B.id + ':' + JSON.stringify(B, (k, v) => (k === 'poses' || (k && k[0] === '_') ? undefined : v));
+  // миниатюры зависят только от кадра 0 — ключи анимации в ключ кэша не входят
+  const key = B.id + ':' + JSON.stringify(B, (k, v) => (k === 'poses' || (k && k[0] === '_') ? undefined : k === 'k' && Array.isArray(v) ? v.slice(0, 1) : v));
   if (builtinCache.key !== key) {
     builtinCache.key = key;
     builtinCache.map = new Map();
@@ -485,7 +488,32 @@ async function mirrorNow() {
   await applyPose(B.id, { name: 'Зеркальная поза', data: () => cur }, { mirror: true, title: 'Зеркальная поза' });
 }
 
-// Ходьба на месте: циклы ключей от текущего кадра
+// Ходьба: циклы ключей от текущего кадра — на месте или с шагами вбок через сцену
+const STRIDE = 0.3; // шаг вбок за полцикла — доля длины ноги
+const sameV = (a, b) => (Array.isArray(a) ? a.every((x, i) => near(x, b[i])) : near(a, b));
+// На сколько градусов повернуть ногу (кость от бедра вниз), чтобы ступня сместилась по x на dx
+function footTurn(a, len, dx) {
+  const r = (a * Math.PI) / 180, sn = Math.sin(r);
+  const c = Math.cos(r) + dx / Math.max(1, len);
+  if (sn < 0.3 || Math.abs(c) >= 1) return (-Math.asin(clamp(dx / Math.max(1, len), -1, 1)) * 180) / Math.PI;
+  const rn = ((r % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  return ((Math.acos(c) - rn) * 180) / Math.PI;
+}
+// Тень из библиотеки под персонажем (соседний слой «Тень…» у его ступней) — едет вместе с ним
+function shadowOf(B, f) {
+  const sib = siblings(app.doc, app.idx, B);
+  const S = evaluate(app.doc, f), bb = bbox(layerWorldPoints(S, B));
+  const h = Math.max(1, bb[3] - bb[1]);
+  let best = null, bd = Infinity;
+  for (const X of sib) {
+    if (X === B || X.type !== 'vector' || !/^тень/i.test(X.name || '') || X.lock || !X.vis) continue;
+    const sb = bbox(layerWorldPoints(S, X)), cx = (sb[0] + sb[2]) / 2, cy = (sb[1] + sb[3]) / 2;
+    const dd = Math.abs(cx - (bb[0] + bb[2]) / 2) + Math.abs(cy - bb[3]);
+    if (cx > bb[0] && cx < bb[2] && Math.abs(cy - bb[3]) < h * 0.2 && dd < bd) { best = X; bd = dd; }
+  }
+  return best;
+}
+
 function walkInPlace() {
   stopPlay();
   const B = rigOf(), R = rigMap(B);
@@ -495,20 +523,74 @@ function walkInPlace() {
   let f0 = app.frame, note = '';
   if (f0 === 0) { f0 = Math.max(1, app.doc.start || 1); note = ` Начато с кадра ${f0}: кадр 0 — поза покоя.`; }
   const P = +opt.tempo || 24, q = P / 4;
-  const n = opt.cycles === 'end' ? Math.max(1, Math.floor((app.doc.end - f0) / P)) : +opt.cycles || 1;
-  const T = n * P;
-  // исходные значения — поза на кадре начала
-  const jobs = WALK.map(([k, ch, vals]) => { const c = R[k][ch]; return { c, vals, base: evalCh(c, f0) }; });
-  for (const { c } of jobs) c.k = c.k.filter((k) => !(k.f > f0 && k.f <= f0 + T));
+  // число шагов (полуциклов): до конца сцены — сколько влезет, но не меньше двух
+  const steps = opt.cycles === 'end' ? Math.max(2, Math.floor((app.doc.end - f0) / (P / 2))) : 2 * (+opt.cycles || 1);
+  const T = steps * (P / 2);
+  const inRange = (k) => k.f > f0 && k.f <= f0 + T;
+  const sd = opt.dir === 'right' ? 1 : opt.dir === 'left' ? -1 : 0;
+  const walkCh = new Set(WALK.map(([k, ch]) => R[k][ch]));
+  // «Начать из позы „Стоит“»: остальные каналы костей персонажа — к позе покоя на кадре начала
+  if (opt.stand) {
+    for (const b of Object.values(R)) for (const c of [b.ang, b.pos, b.scl]) {
+      if (walkCh.has(c)) continue;
+      const had = c.k.some(inRange), r = c.k[0].v;
+      c.k = c.k.filter((k) => !inRange(k));
+      if (c.k.length > 1 || !sameV(evalCh(c, f0), r)) setKey(c, f0, r);
+      if (had) setKey(c, f0 + T, r);
+    }
+  }
+  // исходные значения — поза покоя («Стоит») или поза на кадре начала
+  const jobs = WALK.map(([k, ch, vals]) => { const c = R[k][ch]; return { k, ch, c, vals, base: opt.stand ? c.k[0].v : evalCh(c, f0) }; });
+  const S0 = sd ? evaluate(app.doc, f0) : null; // до правки ключей: где персонаж и тень сейчас
+  const shadow = sd ? shadowOf(B, f0) : null;
+  for (const { c } of jobs) c.k = c.k.filter((k) => !inRange(k));
+  // шаги вбок: ведущая нога уходит на D, вторая стоит на месте, пока тело едет; потом наоборот
+  const scl = evalCh(B.scl, f0), s = sd * (scl[0] < 0 ? -1 : 1);
+  const D = sd ? STRIDE * (R.legN.len + R.legF.len) / 2 : 0;
+  const FOOT = [0, 0.5, 1, 0.5];
   const val = (base, o) => (Array.isArray(base) ? [r3(base[0] + o[0]), r3(base[1] + o[1])] : r3(base + o));
-  for (const { c, vals, base } of jobs) {
-    for (let i = 0; i < n; i++) for (let j = 0; j < 4; j++) setKey(c, f0 + i * P + j * q, val(base, vals[j]), 'smooth');
-    setKey(c, f0 + T, val(base, vals[0]), 'smooth');
+  // ведущая нога — со стороны движения: влево (в осях скелета) первой шагает дальняя — цикл сдвинут на полпериода.
+  // На середине шага ноги всегда расставлены (ближняя — вправо, дальняя — влево), без перекрещивания.
+  const shift = s < 0 ? 2 : 0;
+  for (const { k, ch, c, vals, base } of jobs) {
+    let off = vals.map((v, j) => vals[(j + shift) % 4]);
+    if (sd && ch === 'ang' && (k === 'legN' || k === 'legF')) {
+      const side = k === 'legN' ? 1 : -1;
+      off = FOOT.map((u) => footTurn(base, R[k].len, side * u * D));
+    }
+    for (let j = 0; j <= 2 * steps; j++) setKey(c, f0 + j * q, val(base, off[j % 4]), 'smooth');
+  }
+  // движение слоя персонажа (и его тени) с постоянной скоростью: за полцикла — на длину шага
+  // ключи движения помечены (walk) — ходьба на месте поверх прежней «вправо/влево» их убирает
+  let dist = 0;
+  if (sd) {
+    dist = r3(D * steps * Math.abs(scl[0] || 1));
+    for (const L of shadow ? [B, shadow] : [B]) {
+      const c = L.pos, p0 = evalCh(c, f0);
+      c.k = c.k.filter((k) => !inRange(k));
+      const had0 = keyIndex(c, f0) >= 0, k0 = setKey(c, f0, p0, 'linear');
+      if (!had0) k0.walk = 1;
+      setKey(c, f0 + T, [r3(p0[0] + sd * dist), p0[1]], 'linear').walk = 1;
+    }
+  } else {
+    for (const L of siblings(app.doc, app.idx, B)) {
+      if (L !== B && !(L.type === 'vector' && /^тень/i.test(L.name || ''))) continue;
+      if (L.pos.k.some((k) => k.walk && inRange(k))) L.pos.k = L.pos.k.filter((k) => !(k.walk && inRange(k)));
+    }
   }
   const ext = extendEnd(f0 + T);
   if (app.frame !== f0) app.setFrame(f0);
-  app.commit('Ходьба на месте');
-  app.toast(`Ходьба на месте: кадры ${f0}–${f0 + T}, ${n} ${cyclesWord(n)}. Нажмите Пробел, чтобы посмотреть.${ext}${note}`, 4200);
+  const label = sd ? (sd > 0 ? 'Ходьба вправо' : 'Ходьба влево') : 'Ходьба на месте';
+  app.commit(label);
+  let msg = `${label}: кадры ${f0}–${f0 + T}, ${steps} ${stepsWord(steps)}.`;
+  if (sd) {
+    msg += ` Персонаж пройдёт ${Math.round(dist)} px` + (shadow ? ' (тень — вместе с ним).' : '.');
+    // ушёл за край кадра — подсказать
+    const bb = bbox(layerWorldPoints(S0, B)), half = (app.doc.w || 1280) / 2;
+    const ex = sd > 0 ? bb[2] + dist : bb[0] - dist;
+    if (Math.abs(ex) > half + 20) msg += ' К концу он выйдет за край кадра — уменьшите длину или начните ближе к другому краю.';
+  }
+  app.toast(`${msg} Нажмите Пробел, чтобы посмотреть.${ext}${note}`, 5200);
 }
 
 // Новый персонаж из demo.js — чтобы было с чем работать
@@ -590,6 +672,9 @@ function build() {
   const inp = ui.input, focused = document.activeElement === inp;
   const caret = focused ? [inp.selectionStart, inp.selectionEnd] : null;
   buildBody(el);
+  // новая или только что применённая поза — в поле зрения (после сохранения «Мои позы» встают наверх)
+  const fl = el.querySelector('.ps-card.flash');
+  if (fl && fl.scrollIntoView) fl.scrollIntoView({ block: 'nearest' });
   if (focused && inp.isConnected) { inp.focus({ preventScroll: true }); try { inp.setSelectionRange(caret[0], caret[1]); } catch (e) { /* нет поддержки */ } }
 }
 
@@ -609,7 +694,7 @@ function buildBody(el) {
     const f = app.frame;
     frameLbl.textContent = 'Кадр ' + f;
     frameLbl.classList.toggle('zero', f === 0);
-    hint.textContent = f === 0 ? '' : `Нажмите на позу — она встанет на кадр ${f}. Ставьте позы на разные кадры (1, 12, 24…), движение между ними появится само.`;
+    hint.textContent = f === 0 ? '' : `Нажмите на позу — она встанет на кадр ${f}. Ставьте позы на разные кадры — движение появится само.`;
   });
   ui.frameEls[0]();
   el.append(h('div', { class: 'ps-head' }, icon('bone', 16), h('span', { class: 'ps-rig', title: B.name }, h('b', null, B.name), ` · ${B.bones.length} ${bonesWord(B.bones.length)}`), frameLbl), hint);
@@ -627,8 +712,8 @@ function buildBody(el) {
   }
 
   // ---- мои позы ----
-  const saveBtn = h('button', { class: 'btn sm primary', title: 'Запомнить, как сейчас стоит персонаж (все кости на текущем кадре)', onclick: () => savePose(ui.input.value) }, icon('ps-save', 15), 'Сохранить позу');
   const poses = B.poses || [];
+  const saveBtn = h('button', { class: 'btn sm' + (poses.length || !R ? ' primary' : ''), title: 'Запомнить, как сейчас стоит персонаж (все кости на текущем кадре)', onclick: () => savePose(ui.input.value) }, icon('ps-save', 15), 'Сохранить позу');
   const grid = h('div', { class: 'ps-grid' });
   poses.forEach((p, i) => {
     const key = 'u' + p.id;
@@ -649,12 +734,21 @@ function buildBody(el) {
       ],
     }));
   });
-  el.append(sec('Мои позы',
-    h('div', { class: 'ps-save' }, ui.input, saveBtn),
-    poses.length ? grid : h('div', { class: 'ps-empty' }, 'Поставьте персонажа в позу (тяните кости инструментом «Управление костями», Z) и нажмите «Сохранить позу». Потом она ставится одним кликом на любой кадр.'),
-  ));
+  let mine;
+  if (poses.length || !R) {
+    mine = sec('Мои позы',
+      h('div', { class: 'ps-save' }, ui.input, saveBtn),
+      poses.length ? grid : h('div', { class: 'ps-empty' }, 'Поставьте персонажа в позу (тяните кости инструментом «Управление костями», Z) и нажмите «Сохранить позу». Потом она ставится одним кликом на любой кадр.'),
+    );
+  } else {
+    // своих поз пока нет — одна строка, готовые позы выше
+    ui.input.value = '';
+    saveBtn.title = 'Запомнить, как сейчас стоит персонаж (все кости на текущем кадре). Поза появится здесь — её можно переименовать.';
+    mine = h('section', { class: 'ps-sec ps-mine0' }, h('div', { class: 'insp-title' }, 'Мои позы'), h('span', { class: 'ps-mine0-n' }, 'пока нет'), saveBtn);
+  }
 
   // ---- готовые позы ----
+  let ready = null;
   if (R) {
     const thumbs = builtinThumbs(B, R);
     const g2 = h('div', { class: 'ps-grid' });
@@ -672,22 +766,33 @@ function buildBody(el) {
         ],
       }));
     }
-    el.append(sec('Готовые позы', g2));
+    ready = sec('Готовые позы', g2);
   }
+  if (poses.length) el.append(mine, ready || ''); else el.append(ready || '', mine);
 
   // ---- помощники ----
   const tool = (ic, title, desc, fn, extra) => h('div', { class: 'ps-toolw' },
     h('button', { class: 'ps-tool', onclick: fn }, icon(ic, 18), h('span', null, h('b', null, title), h('span', { class: 'd' }, desc))), extra || null);
   const tools = [
-    tool('ps-between', 'Промежуточная поза', 'Встаньте между двумя позами — кости займут среднее положение. Движение станет живее.', breakdown),
+    tool('ps-between', 'Промежуточная поза', 'Встаньте между двумя позами — появится ключ со средней позой. Подправьте его (например, голову или руку), и движение станет живее.', breakdown),
   ];
   if (pairsOf(B).size) tools.push(tool('ps-mirror', 'Зеркально', 'Отразить текущую позу: ' + (R ? 'ближние и дальние руки и ноги меняются местами.' : 'левые и правые кости меняются местами.'), mirrorNow));
   if (R) {
+    const walkTitle = h('b'), walkDesc = h('span', { class: 'd' });
+    const setWalkText = () => {
+      walkTitle.textContent = { none: 'Автоанимация: ходьба на месте', right: 'Автоанимация: идти вправо', left: 'Автоанимация: идти влево' }[opt.dir];
+      walkDesc.textContent = (opt.dir === 'none' ? 'Ноги шагают, руки качаются, корпус пружинит' : 'Персонаж шагает боком через сцену, ступни не скользят')
+        + ' — ключи от текущего кадра.';
+    };
+    setWalkText();
     const walkOpts = h('div', { class: 'ps-walk-opts' },
+      selectField('Куда', opt.dir, { none: 'на месте', right: 'вправо →', left: '← влево' }, (v) => { opt.dir = v; saveOpt(); setWalkText(); }),
       selectField('Темп', opt.tempo, { 16: 'быстро', 24: 'обычно', 32: 'медленно' }, (v) => { opt.tempo = v; saveOpt(); }),
-      selectField('Длина', opt.cycles, { 1: '1 цикл', 2: '2 цикла', 3: '3 цикла', 4: '4 цикла', end: 'до конца сцены' }, (v) => { opt.cycles = v; saveOpt(); }),
+      selectField('Длина', opt.cycles, { 1: '2 шага', 2: '4 шага', 3: '6 шагов', 4: '8 шагов', end: 'до конца' }, (v) => { opt.cycles = v; saveOpt(); }),
+      checkField('Начать из позы «Стоит»', opt.stand, (v) => { opt.stand = v; saveOpt(); },
+        'Включено: на кадре начала персонаж встаёт в спокойную позу, руки и ноги двигаются от неё. Выключено: шаги добавляются к текущей позе (например, можно идти, махая рукой).'),
     );
-    tools.push(tool('ps-walk', 'Автоанимация: ходьба на месте', 'Ноги шагают, руки качаются, корпус пружинит — ключи от текущего кадра.', walkInPlace, walkOpts));
+    tools.push(h('div', { class: 'ps-toolw' }, h('button', { class: 'ps-tool', onclick: walkInPlace }, icon('ps-walk', 18), h('span', null, walkTitle, walkDesc)), walkOpts));
   }
   el.append(sec('Помощники', h('div', { class: 'ps-tools' }, ...tools)));
 
@@ -731,7 +836,7 @@ registerMenu('Анимация', () => {
     { label: 'Сохранить позу', icon: 'ps-save', disabled: () => !B || !B.bones.length, action: () => { savePose(''); openPoses(); } },
     { label: 'Промежуточная поза', icon: 'ps-between', disabled: () => !B || !B.bones.length, action: breakdown },
     { label: 'Зеркальная поза', icon: 'ps-mirror', disabled: () => !B || !pairsOf(B).size, action: mirrorNow },
-    { label: 'Ходьба на месте', icon: 'ps-walk', disabled: () => !rigMap(B), action: walkInPlace },
+    { label: { none: 'Ходьба на месте', right: 'Ходьба вправо', left: 'Ходьба влево' }[opt.dir], icon: 'ps-walk', disabled: () => !rigMap(B), action: walkInPlace },
   ];
 });
 
@@ -754,7 +859,6 @@ registerInspector({
 });
 
 addStyle(`
-#side-body > #inspector[hidden] { display: none; }
 .ps { padding: 8px 10px 24px; overflow-x: hidden; }
 .ps-head { display: flex; align-items: center; gap: 7px; padding: 2px 0 8px; border-bottom: 1px solid var(--line); min-width: 0; }
 .ps-head > .ic { color: var(--accent); }
@@ -787,6 +891,10 @@ addStyle(`
 .ps-act.del:hover { background: #a8323f; }
 .ps-card.flash .ps-main { animation: ps-flash .9s ease-out; }
 @keyframes ps-flash { from { box-shadow: 0 0 0 3px rgba(76,157,255,.85); border-color: var(--accent); } to { box-shadow: 0 0 0 3px rgba(76,157,255,0); } }
+.ps-mine0 { display: flex; align-items: center; gap: 8px; }
+.ps-mine0 .insp-title { margin: 0; }
+.ps-mine0-n { flex: 1; min-width: 0; color: var(--text3); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-mine0 .btn { flex: none; }
 .ps-empty { color: var(--text3); font-size: 12px; padding: 10px; border: 1px dashed var(--line2); border-radius: 7px; text-align: center; }
 .ps-tools { display: flex; flex-direction: column; gap: 6px; }
 .ps-tool { display: flex; align-items: flex-start; gap: 9px; width: 100%; padding: 7px 9px; border-radius: 7px; border: 1px solid var(--line2); background: var(--bg2); color: var(--text); text-align: left; }
@@ -794,8 +902,11 @@ addStyle(`
 .ps-tool > .ic { color: var(--accent); margin-top: 1px; }
 .ps-tool b { display: block; font-weight: 600; font-size: 12.5px; }
 .ps-tool .d { display: block; color: var(--text2); font-size: 11.5px; margin-top: 1px; }
-.ps-walk-opts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 8px; padding: 6px 0 0 30px; }
-.ps-walk-opts > .sel { min-width: 0; gap: 5px; }
+.ps-walk-opts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 6px 0 0 10px; }
+.ps-walk-opts select { padding-left: 5px; padding-right: 2px; }
+.ps-walk-opts > .sel { min-width: 0; gap: 2px; flex-direction: column; align-items: stretch; }
+.ps-walk-opts > .sel > span { color: var(--text3); font-size: 11px; }
+.ps-walk-opts > .chk { grid-column: 1 / -1; font-size: 12px; }
 .ps-walk-opts select { width: 100%; }
 .ps-walk-opts .sel, .ps-opts .sel { font-size: 12px; }
 .ps-opts { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }

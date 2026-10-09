@@ -8,7 +8,7 @@ import { ch, evalCh, setKey } from '../anim.js';
 import { newLayer } from '../model.js';
 import { Renderer } from '../render.js';
 import { registerIcon, icon } from '../icons.js';
-import { registerLayerType, registerInspector, registerMenu, registerOverlay, addStyle } from '../ext.js';
+import { registerLayerType, registerInspector, registerMenu, registerOverlay, registerHook, addStyle } from '../ext.js';
 
 const TAU = Math.PI * 2;
 const MAX_COUNT = 1500;
@@ -315,12 +315,10 @@ function paths() {
   circle.arc(0, 0, 1, 0, TAU);
   const hl = new Path2D();
   hl.ellipse(-0.38, -0.42, 0.2, 0.12, -0.7, 0, TAU);
-  PATHS = { heart: new Path2D(D_HEART), leaf: new Path2D(D_LEAF), vein: new Path2D(D_VEIN), rect: new Path2D(D_RECT), spark: new Path2D(D_SPARK), circle, hl };
+  PATHS = { heart: new Path2D(D_HEART), leaf: new Path2D(D_LEAF), vein: new Path2D(D_VEIN), spark: new Path2D(D_SPARK), circle, hl };
   return PATHS;
 }
 
-// Спрайты мягких/светящихся точек (по цвету)
-const sprites = new Map();
 function mixWhite(hex, k) {
   const [r, g, b] = hex2rgb(hex);
   return [Math.round(r + (255 - r) * k), Math.round(g + (255 - g) * k), Math.round(b + (255 - b) * k)];
@@ -328,63 +326,137 @@ function mixWhite(hex, k) {
 const GLOW_K = 2.6; // радиус ореола светящейся точки относительно размера
 const SOFT_STOPS = [[0, 1, 0], [0.5, 0.8, 0], [0.8, 0.25, 0], [1, 0, 0]];
 const GLOW_STOPS = [[0, 1, 0.85], [0.16, 1, 0.5], [0.32, 0.62, 0], [0.6, 0.16, 0], [1, 0, 0]];
-function sprite(kind, hex) {
-  const key = kind + hex;
-  let c = sprites.get(key);
-  if (c) return c;
-  c = document.createElement('canvas');
-  c.width = c.height = 64;
-  const g = c.getContext('2d');
-  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  for (const [off, al, wh] of kind === 'glow' ? GLOW_STOPS : SOFT_STOPS) {
+const STAR_GLOW = 2.4; // ореол звезды относительно её размера
+
+// ---------- спрайты ----------
+// Неповёрнутые формы (точки, звёзды, блёстки, пузыри) заранее рисуются в маленький canvas — по виду,
+// цвету и размеру 8…256 px, — и на кадре частица — это один drawImage вместо нескольких путей.
+// Размер спрайта подбирается под экранный размер частицы: чётко и при приближении, и в экспорте 200%.
+// EXT — половина стороны формы в единицах частицы (для спрайта и для отсечения невидимых).
+const EXT = { soft: 1, glow: 1, star: STAR_GLOW, spark: 1, ring: 1.06, leaf: 1.3, heart: 1.02, rect: 0.5 };
+function gradient(g, hex, stops, R) {
+  const gr = g.createRadialGradient(0, 0, 0, 0, 0, R);
+  for (const [off, al, wh] of stops) {
     const [r, gg, b] = mixWhite(hex, wh);
     gr.addColorStop(off, `rgba(${r},${gg},${b},${al})`);
   }
-  g.fillStyle = gr;
-  g.fillRect(0, 0, 64, 64);
-  sprites.set(key, c);
-  if (sprites.size > 80) sprites.delete(sprites.keys().next().value);
-  return c;
+  return gr;
 }
+function paintShape(g, kind, hex) {
+  const PT = paths();
+  switch (kind) {
+    case 'soft': case 'glow':
+      g.fillStyle = gradient(g, hex, kind === 'glow' ? GLOW_STOPS : SOFT_STOPS, 1);
+      g.fillRect(-1, -1, 2, 2);
+      break;
+    case 'star':
+      g.globalAlpha = 0.45;
+      g.fillStyle = gradient(g, hex, GLOW_STOPS, STAR_GLOW);
+      g.fillRect(-STAR_GLOW, -STAR_GLOW, 2 * STAR_GLOW, 2 * STAR_GLOW);
+      g.globalAlpha = 1;
+      g.fillStyle = hex;
+      g.fill(PT.spark);
+      break;
+    case 'ring':
+      g.fillStyle = g.strokeStyle = hex;
+      g.globalAlpha = 0.13; g.fill(PT.circle);
+      g.globalAlpha = 1; g.lineWidth = 0.09; g.stroke(PT.circle);
+      g.globalAlpha = 0.85; g.fillStyle = '#ffffff'; g.fill(PT.hl);
+      break;
+    default: g.fillStyle = hex; g.fill(PT.spark);
+  }
+}
+const sprites = new Map();
+// lv — уровень размера: сторона спрайта 2^lv пикселей (3…8)
+function sprite(kind, hex, lv) {
+  const key = kind + hex + lv;
+  let s = sprites.get(key);
+  if (s) return s;
+  const N = 1 << lv, ext = EXT[kind];
+  const c = document.createElement('canvas');
+  c.width = c.height = N;
+  const g = c.getContext('2d');
+  const k = (N - 2) / (2 * ext); // по 1 px запаса с краёв, чтобы сглаживание не обрезалось
+  g.setTransform(k, 0, 0, k, N / 2, N / 2);
+  paintShape(g, kind, hex);
+  s = { c, e: N / 2 / k };
+  sprites.set(key, s);
+  if (sprites.size > 128) sprites.delete(sprites.keys().next().value);
+  return s;
+}
+// экранный диаметр (px) → уровень спрайта с небольшим запасом
+const level = (d) => Math.max(3, Math.min(8, 32 - Math.clz32(Math.ceil(d * 1.15) - 1)));
 
 // Свечение складывается со светом под ним — но на светлом фоне так частицы пропали бы совсем
 const additive = (P) => P.additive && !isLight(app.doc && app.doc.bg);
 
+const ONION_MAX = 120; // в «луковой коже» хватает намёка: не больше стольких частиц на слой
+
 // ---------- отрисовка на холсте ----------
-function draw(ctx, L, rec, S) {
+function draw(ctx, L, rec, S, o) {
   const n = simulate(L, S.f);
   if (!n) return;
-  const P = presetOf(L), cols = colorsOf(L), PT = paths();
+  const P = presetOf(L), cols = colorsOf(L);
   ctx.save();
   ctx.transform(...rec.world);
   const b = ctx.getTransform();
+  const det = b.a * b.d - b.b * b.c;
+  if (!(Math.abs(det) > 1e-12)) { ctx.restore(); return; }
+  // видимая часть холста в координатах слоя: частицы за её пределами не рисуем
+  const iv = b.inverse(), cw = ctx.canvas.width, chh = ctx.canvas.height;
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const [px, py] of [[0, 0], [cw, 0], [0, chh], [cw, chh]]) {
+    const x = iv.a * px + iv.c * py + iv.e, y = iv.b * px + iv.d * py + iv.f;
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  const out = (x, y, rad) => x + rad < x0 || x - rad > x1 || y + rad < y0 || y - rad > y1;
+  const scl = Math.sqrt(Math.abs(det)); // пикселей холста на единицу слоя
+  const step = o && o.onion ? Math.max(1, Math.ceil(n / ONION_MAX)) : 1;
   const ga = ctx.globalAlpha;
+  ctx.imageSmoothingEnabled = true;
   if (additive(P)) ctx.globalCompositeOperation = 'lighter';
-  // матрица частицы = матрица слоя · T(x, y) · R(rot) · S(sx, sy) — без save/restore на каждую частицу
-  const setT = (x, y, r, sx, sy) => {
-    const c = r ? Math.cos(r) : 1, s = r ? Math.sin(r) : 0;
-    const A = c * sx, B = s * sx, C = -s * sy, D = c * sy;
-    ctx.setTransform(b.a * A + b.c * B, b.b * A + b.d * B, b.a * C + b.c * D, b.b * C + b.d * D, b.a * x + b.c * y + b.e, b.b * x + b.d * y + b.f);
+  // спрайты этого кадра: [вид][цвет * 16 + уровень]
+  const caches = {};
+  const spr = (kind, ci, d) => {
+    const lv = level(d), C = caches[kind] || (caches[kind] = []), i = ci * 16 + lv;
+    return C[i] || (C[i] = sprite(kind, cols[ci], lv));
   };
-  let lastC = -1;
-  const fill = (j) => { if (BC[j] !== lastC) { lastC = BC[j]; ctx.fillStyle = cols[lastC]; } };
+  // частица без поворота: спрайт прямо в координатах слоя (без setTransform на каждую)
+  const blit = (kind, j, rx, ry, alpha) => {
+    const ext = EXT[kind], rm = Math.max(rx, ry);
+    if (out(BX[j], BY[j], rm * ext)) return;
+    const s = spr(kind, BC[j], 2 * ext * rm * scl);
+    ctx.globalAlpha = ga * alpha;
+    const ex = s.e * rx, ey = s.e * ry;
+    ctx.drawImage(s.c, BX[j] - ex, BY[j] - ey, 2 * ex, 2 * ey);
+  };
   switch (P.shape) {
-    case 'soft': case 'glow': {
-      const k = P.shape === 'glow' ? GLOW_K : 1;
-      for (let j = 0; j < n; j++) {
-        const r = BS[j] * k;
-        setT(BX[j], BY[j], 0, r, r);
-        ctx.globalAlpha = ga * BA[j];
-        ctx.drawImage(sprite(P.shape, cols[BC[j]]), -1, -1, 2, 2);
+    case 'soft': case 'glow': case 'star': {
+      const kind = P.shape, k = kind === 'glow' ? GLOW_K : 1;
+      for (let j = 0; j < n; j += step) { const r = BS[j] * k; blit(kind, j, r, r, BA[j]); }
+      break;
+    }
+    case 'glitter': {
+      for (let j = 0; j < n; j += step) {
+        const r = BS[j];
+        blit('soft', j, r, r, BA[j]);
+        const fl = (BE[j] - 0.72) / 0.28;
+        if (fl > 0) { const rr = r * (1.2 + 2.6 * fl); blit('spark', j, rr, rr, BA[j] * fl); }
       }
+      break;
+    }
+    case 'ring': {
+      for (let j = 0; j < n; j += step) blit('ring', j, BS[j] * Math.abs(BSX[j]), BS[j] * Math.abs(BSY[j]), BA[j]);
       break;
     }
     case 'streak': {
       // штрихи группируются по цвету/прозрачности/толщине: десятки обводок вместо сотен
       const groups = new Map();
-      for (let j = 0; j < n; j++) {
+      for (let j = 0; j < n; j += step) {
+        const hx = BSX[j] / 2, hy = BSY[j] / 2;
+        if (out(BX[j] - hx, BY[j] - hy, Math.abs(hx) + Math.abs(hy) + BS[j])) continue;
         const al = Math.ceil(BA[j] * 6), wq = Math.max(0.25, Math.round(BS[j] * 2) / 2);
-        const key = BC[j] + '|' + al + '|' + wq;
+        const key = BC[j] * 4096 + al * 512 + wq * 2;
         let g = groups.get(key);
         if (!g) groups.set(key, (g = { c: cols[BC[j]], a: al / 6, w: wq, p: new Path2D() }));
         g.p.moveTo(BX[j], BY[j]);
@@ -399,75 +471,23 @@ function draw(ctx, L, rec, S) {
       }
       break;
     }
-    case 'star': {
-      for (let j = 0; j < n; j++) {
-        const r = BS[j], a = ga * BA[j];
-        setT(BX[j], BY[j], 0, r * 2.4, r * 2.4);
-        ctx.globalAlpha = a * 0.45;
-        ctx.drawImage(sprite('glow', cols[BC[j]]), -1, -1, 2, 2);
-        setT(BX[j], BY[j], 0, r, r);
-        ctx.globalAlpha = a;
-        fill(j);
-        ctx.fill(PT.spark);
-      }
-      break;
-    }
-    case 'glitter': {
-      for (let j = 0; j < n; j++) {
-        const r = BS[j], a = ga * BA[j];
-        setT(BX[j], BY[j], 0, r, r);
-        ctx.globalAlpha = a;
-        ctx.drawImage(sprite('soft', cols[BC[j]]), -1, -1, 2, 2);
-        const fl = (BE[j] - 0.72) / 0.28;
-        if (fl > 0) {
-          const rr = r * (1.2 + 2.6 * fl);
-          setT(BX[j], BY[j], 0, rr, rr);
-          ctx.globalAlpha = a * fl;
-          fill(j);
-          ctx.fill(PT.spark);
-        }
-      }
-      break;
-    }
-    case 'ring': {
-      ctx.lineWidth = 0.09;
-      for (let j = 0; j < n; j++) {
-        const r = BS[j], a = ga * BA[j];
-        setT(BX[j], BY[j], 0, r * BSX[j], r * BSY[j]);
-        if (BC[j] !== lastC) { lastC = BC[j]; ctx.fillStyle = ctx.strokeStyle = cols[lastC]; }
-        ctx.globalAlpha = a * 0.13;
-        ctx.fill(PT.circle);
-        ctx.globalAlpha = a;
-        ctx.stroke(PT.circle);
-        ctx.globalAlpha = a * 0.85;
-        const fs = ctx.fillStyle;
-        ctx.fillStyle = '#ffffff';
-        ctx.fill(PT.hl);
-        ctx.fillStyle = fs;
-      }
-      break;
-    }
-    case 'leaf': {
-      ctx.lineWidth = 0.07;
-      ctx.strokeStyle = 'rgba(70,35,10,.38)';
-      for (let j = 0; j < n; j++) {
-        const r = BS[j];
-        setT(BX[j], BY[j], BR[j], r * BSX[j], r * BSY[j]);
+    default: { // leaf, rect, heart — с поворотом и «переворотом»
+      // Повёрнутый спрайт рисуется заметно медленнее простой заливки, поэтому здесь — пути (без save/restore)
+      const PT = paths(), kind = P.shape, ext = EXT[kind] * 1.42;
+      let lastC = -1;
+      if (kind === 'leaf') { ctx.lineWidth = 0.07; ctx.strokeStyle = 'rgba(70,35,10,.38)'; }
+      for (let j = 0; j < n; j += step) {
+        const r = BS[j], sx = r * BSX[j], sy = r * BSY[j];
+        if (out(BX[j], BY[j], Math.max(Math.abs(sx), Math.abs(sy)) * ext)) continue;
+        // матрица частицы = матрица слоя · T(x, y) · R(rot) · S(sx, sy)
+        const rot = BR[j], c = rot ? Math.cos(rot) : 1, sn = rot ? Math.sin(rot) : 0;
+        const A = c * sx, B = sn * sx, C = -sn * sy, D = c * sy, x = BX[j], y = BY[j];
+        ctx.setTransform(b.a * A + b.c * B, b.b * A + b.d * B, b.a * C + b.c * D, b.b * C + b.d * D, b.a * x + b.c * y + b.e, b.b * x + b.d * y + b.f);
         ctx.globalAlpha = ga * BA[j];
-        fill(j);
-        ctx.fill(PT.leaf);
-        ctx.stroke(PT.vein);
-      }
-      break;
-    }
-    default: { // rect, heart
-      const p = P.shape === 'heart' ? PT.heart : PT.rect;
-      for (let j = 0; j < n; j++) {
-        const r = BS[j];
-        setT(BX[j], BY[j], BR[j], r * BSX[j], r * BSY[j]);
-        ctx.globalAlpha = ga * BA[j];
-        fill(j);
-        ctx.fill(p);
+        if (BC[j] !== lastC) { lastC = BC[j]; ctx.fillStyle = cols[lastC]; }
+        if (kind === 'rect') ctx.fillRect(-0.5, -0.5, 1, 1);
+        else if (kind === 'heart') ctx.fill(PT.heart);
+        else { ctx.fill(PT.leaf); ctx.stroke(PT.vein); }
       }
     }
   }
@@ -636,16 +656,18 @@ function createParticles(id = 'snow', name) {
   return L;
 }
 
-// Плавное появление/исчезновение (ключи канала «Показано»)
-function fadeKeys(L, dir) {
-  const doc = app.doc, f = app.frame;
+// Плавное появление/исчезновение (ключи канала «Показано»), f — кадр начала (по умолчанию текущий)
+function fadeKeys(L, dir, f = app.frame) {
+  const doc = app.doc;
   const dur = Math.max(2, Math.round(doc.fps || 24));
   const c = L.amt || (L.amt = ch(1));
   const near0 = (v) => v <= 0.01;
   let s, e;
   if (dir > 0) {
-    s = f > 0 ? f : doc.start;
+    s = f > 0 ? f : Math.max(1, doc.start);
     e = s + dur;
+    // у самого конца анимации появление не успело бы закончиться — частиц не было бы видно вовсе
+    if (e > doc.end) { s = Math.max(1, doc.start, doc.end - dur); e = s + dur; }
     c.k = c.k.filter((k) => k.f === 0 || k.f < s || k.f > e);
     // до появления частиц нет (до ближайшего ключа, где они и так скрыты)
     for (let i = c.k.length - 1; i >= 1; i--) {
@@ -663,7 +685,7 @@ function fadeKeys(L, dir) {
     e = Math.min(s + dur, doc.end);
     if (e - s < Math.max(2, dur / 4)) { e = doc.end; s = Math.max(0, e - dur); }
     const v0 = clamp(+evalCh(c, s) || 0, 0, 1);
-    const top = v0 > 0.05 ? v0 : 1;
+    const top = v0 > 0.97 || v0 <= 0.05 ? 1 : v0;
     c.k = c.k.filter((k) => k.f === 0 || k.f < s || k.f > e);
     // после исчезновения частиц нет (до ближайшего ключа, где они и так скрыты)
     for (const k of c.k) {
@@ -678,11 +700,31 @@ function fadeKeys(L, dir) {
   app.toast(dir > 0 ? `Частицы плавно появляются: кадры ${s}–${e}` : `Частицы плавно исчезают: кадры ${s}–${e}`, 3000);
 }
 
+// ---------- «тяжёлая» сцена ----------
+const HEAVY = 3000;
+// Сколько частиц во всех видимых слоях частиц сцены
+function totalCount() {
+  if (!app.idx) return 0;
+  let n = 0;
+  const hidden = (X) => { for (let p = X; p; p = app.idx.parent.get(p.id)) if (!p.vis) return true; return false; };
+  for (const X of app.idx.list) if (X.type === 'particles' && !hidden(X)) n += clamp(Math.round(num(X.count, presetOf(X).def.count)), 0, MAX_COUNT);
+  return n;
+}
+const heavyText = (n) => `В сцене ${n} частиц — просмотр может подтормаживать. Если так, уменьшите «Количество» или скройте лишние слои частиц (на экспорт это не влияет).`;
+let lastTotal = 0;
+app.on('docloaded', () => { lastTotal = totalCount(); });
+app.on('commit', () => {
+  const n = totalCount();
+  if (n > HEAVY && lastTotal <= HEAVY) app.toast(heavyText(n), 6000);
+  lastTotal = n;
+});
+
 // ---------- тип слоя ----------
 registerLayerType('particles', {
   label: 'Частицы',
   icon: 'particles',
-  creatable: true,
+  // в «Новый слой» — не просто «Частицы», а сразу выбор эффекта (см. registerMenu('Новый слой') ниже)
+  creatable: false,
   color: TYPE_COLOR,
   defaults(L, doc) {
     applyPreset(L, 'snow');
@@ -694,7 +736,15 @@ registerLayerType('particles', {
     if (autoNamed(L)) L.name = 'Снег';
   },
   channels(L) { return [L.amt || (L.amt = ch(1))]; },
-  draw(ctx, L, rec, S) { draw(ctx, L, rec, S); },
+  channelLabels: { amt: 'Показано' },
+  // эффект во весь кадр не должен перехватывать клики по персонажам — выбирается в панели слоёв
+  pick: false,
+  // карточки во вкладке «✨ Оживить» → «Особые эффекты: Частицы»
+  effects: [
+    { id: 'ptc-fadein', name: 'Плавно появиться', meta: 'за 1 секунду', hint: 'Сначала частиц нет, затем за 1 секунду они появляются — с кадра «Начало»', apply: (L, o) => fadeKeys(L, 1, o && o.start) },
+    { id: 'ptc-fadeout', name: 'Плавно исчезнуть', anim: 'pz-fadeout 1.8s infinite', meta: 'за 1 секунду', hint: 'За 1 секунду частицы исчезают — с кадра «Начало» (если это первый кадр — в конце анимации)', apply: (L, o) => fadeKeys(L, -1, o && o.start) },
+  ],
+  draw(ctx, L, rec, S, o) { draw(ctx, L, rec, S, o); },
   bounds(L, rec) {
     const [W, H] = areaOf(L), w = W / 2, hh = H / 2;
     return [[-w, -hh], [w, -hh], [w, hh], [-w, hh]].map(([x, y]) => M.apply(rec.world, x, y));
@@ -710,8 +760,8 @@ app.addLayer = function (type, name) {
 };
 
 // Копия слоя частиц с тем же «вариантом» легла бы точно поверх оригинала — даём ей свою раскладку
-app.on('commit', () => {
-  const lab = app.history.undoLabel;
+// (до снимка истории — тем же шагом отмены, что и само дублирование)
+registerHook('beforeCommit', (lab) => {
   if (lab !== 'Дублирование слоя' && lab !== 'Вставка слоя') return;
   const A = app.active;
   if (!A) return;
@@ -722,19 +772,28 @@ app.on('commit', () => {
   const others = new Set(app.idx.list.filter((X) => X.type === 'particles' && !mine.includes(X)).map((X) => X.seed | 0));
   const clash = mine.filter((X) => others.has(X.seed | 0));
   if (!clash.length) return;
-  queueMicrotask(() => {
-    for (const X of clash) { let s; do { s = 1 + Math.floor(Math.random() * 99999); } while (others.has(s)); X.seed = s; }
-    app.commit('Копия частиц: своя раскладка');
-    app.toast('Копия частиц получила свою раскладку, чтобы не совпадать с оригиналом', 2600);
-  });
+  for (const X of clash) { let s; do { s = 1 + Math.floor(Math.random() * 99999); } while (others.has(s)); X.seed = s; others.add(s); }
+  app.toast('Копия частиц получила свою раскладку, чтобы не совпадать с оригиналом', 2600);
 });
 
-// ---------- меню «Слой» ----------
-registerMenu('Слой', () => [{
-  label: 'Добавить частицы',
-  icon: 'particles',
-  sub: [{ title: 'Готовые эффекты' }, ...PRESET_IDS.map((id) => ({ label: PRESETS[id].name, icon: 'ptc-' + id, action: () => createParticles(id) }))],
-}]);
+// Сменили размер кадра в «Настройках проекта» — частицы «во весь кадр» растягиваются вместе с ним
+registerHook('beforeCommit', (lab, doc) => {
+  if (lab !== 'Настройки проекта' || !app.idx) return;
+  const H = app.history, top = H.stack[H.i];
+  let prev = null;
+  try { prev = top && JSON.parse(top.snap); } catch (e) { return; }
+  if (!prev || (prev.w === doc.w && prev.h === doc.h)) return;
+  for (const X of app.idx.list) {
+    if (X.type !== 'particles') continue;
+    const [aw, ah] = areaOf(X);
+    if (Math.abs(aw - prev.w) < 1 && Math.abs(ah - prev.h) < 1) X.area = [doc.w, doc.h];
+  }
+});
+
+// ---------- меню «Слой» и «+» в панели слоёв ----------
+const presetItems = () => [{ title: 'Готовые эффекты' }, ...PRESET_IDS.map((id) => ({ label: PRESETS[id].name, icon: 'ptc-' + id, action: () => createParticles(id) }))];
+registerMenu('Слой', () => [{ label: 'Добавить частицы', icon: 'particles', sub: presetItems() }]);
+registerMenu('Новый слой', () => [{ label: 'Частицы: снег, дождь…', icon: 'particles', sub: presetItems() }]);
 
 // ---------- рамка области на холсте ----------
 registerOverlay((ctx, S) => {
@@ -824,6 +883,9 @@ registerInspector({
       slider('Завихрения', 'turb', 0, 1.5, 0.01, 2, P.model === 'wander' ? 'Размах порхания' : 'Покачивание и кружение частиц'),
       slider('Разброс прозр.', 'opVar', 0, 1, 0.01, 2, 'Насколько по-разному прозрачны частицы: 0 — все одинаковые'),
     );
+
+    const total = totalCount();
+    if (total > HEAVY) kids.push(h('div', { class: 'insp-note ptc-heavy' }, heavyText(total)));
 
     // цвета
     const cols = colorsOf(L).slice();
@@ -919,4 +981,5 @@ addStyle(`
 .ptc-sub { margin: 10px 0 2px; color: var(--text2); font-size: 11.5px; font-weight: 600; }
 .ptc-bg { display: flex; align-items: center; gap: 8px; margin: 2px 0 8px; padding: 6px 8px; border-radius: 6px; background: rgba(255,173,92,.1); border: 1px solid rgba(255,173,92,.3); color: var(--text); font-size: 12px; }
 .ptc-bg span { flex: 1; }
+.ptc-heavy { margin: 4px 0 6px; padding: 5px 8px; border-radius: 6px; background: rgba(255,200,90,.08); border: 1px solid rgba(255,200,90,.22); }
 `, 'particles-css');

@@ -1,7 +1,7 @@
 // Текстовые слои: надписи прямо на холсте (инструмент «Текст», Y) и анимация текста в один клик —
 // печатная машинка, появление по буквам, выпрыгивание, стирание.
 import { app } from '../app.js';
-import { registerTool, tools, hitShape, snapXY } from '../tools.js';
+import { registerTool, snapXY, placeFrame, pickLayerAt } from '../tools.js';
 import { ch, evalCh, setKey, ease } from '../anim.js';
 import { newLayer } from '../model.js';
 import { activeSwitchChild } from '../render.js';
@@ -542,7 +542,7 @@ function finishEditor(keep, defer = false) {
     keepFocus(() => {
       if (E.isNew) {
         app.commit('Новый текст');
-        if (!hinted) { hinted = true; app.toast('Надпись готова! Оживите её одной кнопкой: «Печатная машинка» в панели «Свойства» справа.', 5000); }
+        if (!hinted) { hinted = true; app.toast('Надпись готова! Оживите её одной кнопкой: «Печатная машинка» — во вкладке «✨ Оживить» или в «Свойствах».', 5000); }
       } else app.commit('Текст'); // без изменений история не пополнится
     });
   };
@@ -564,26 +564,46 @@ app.on('docloaded', () => { if (ed) { const E = ed; ed = null; E.ta.remove(); } 
 
 // Новый текстовый слой из меню «+» — сразу печатать
 const autoOpened = new Set();
-app.on('commit', () => {
-  const L = app.active, top = app.history.stack[app.history.i];
-  if (!L || L.type !== 'text' || ed || !top || top.label !== 'Новый слой' || L.text !== 'Текст' || autoOpened.has(L.id)) return;
+// …и не внутри персонажа с костями или переключателя (иначе надпись ездит вместе с ними) — рядом, на верхнем уровне
+registerHook('beforeCommit', (label) => {
+  const L = app.active;
+  if (label !== 'Новый слой' || !L || L.type !== 'text' || L.text !== 'Текст' || autoOpened.has(L.id)) return;
+  const p = app.idx.parent.get(L.id);
+  let rig = false;
+  for (let X = p; X; X = app.idx.parent.get(X.id)) if (X.type === 'bone' || X.type === 'switch') rig = true;
+  if (!rig) return;
+  const top = topAncestor(L);
+  p.children.splice(p.children.indexOf(L), 1);
+  app.doc.layers.splice(app.doc.layers.indexOf(top) + 1, 0, L);
+  app.restructure();
+  app.activeId = L.id;
+});
+app.on('commit', (label) => {
+  const L = app.active;
+  if (!L || L.type !== 'text' || ed || label !== 'Новый слой' || L.text !== 'Текст' || autoOpened.has(L.id)) return;
   autoOpened.add(L.id);
   setTimeout(() => { if (app.active === L && !ed) openEditor(L, { selectAll: true }); }, 60);
 });
 
 // ---------- создание ----------
+// Объект верхнего уровня, в котором лежит слой
+function topAncestor(L) {
+  let X = L;
+  for (let p = X && app.idx.parent.get(X.id); p; p = app.idx.parent.get(p.id)) X = p;
+  return X;
+}
+
 function createAt(e) {
   const prev = app.activeId;
-  // внутрь переключателя не кладём — надпись встанет рядом с ним
-  const par = app.active && app.idx.parent.get(app.active.id);
-  if (par && par.type === 'switch') app.activeId = par.id;
-  const A = app.active;
-  const n = app.idx.list.filter((l) => l.type === 'text').length + 1;
-  const L = newLayer(app.doc, 'text', 'Текст ' + n);
+  // Надпись — отдельный объект на верхнем уровне, прямо над выбранным объектом: внутри персонажа с костями,
+  // переключателя или группы она двигалась бы вместе с ними (эффекты «Оживить», запись движения)
+  const top = app.active && topAncestor(app.active);
+  app.activeId = top ? top.id : null;
+  const L = newLayer(app.doc, 'text', app.freeName('Текст'));
   L.font = FONTS[opt('txFont', 'Inter')] ? opt('txFont', 'Inter') : 'Inter';
   L.size = clamp(+opt('txSize', 72) || 72, 4, 2000);
   applyLook(L, opt('txLook', 'plain'));
-  app.insertLayer(L, { inside: !!(A && A.children && A.type !== 'switch') });
+  app.insertLayer(L, { inside: false });
   // положение в пространстве родителя: текст появляется там, где кликнули
   const rec = app.rescene().layers.get(L.id);
   const P = M.mul(rec.world, M.inv(rec.local));
@@ -614,16 +634,22 @@ function holdBefore(c, f) {
   if (i > 0 && Math.abs(p.v - c.k[i].v) > 1e-6) p.i = 'step';
 }
 
-function animateText(L, kind) {
-  if (!L || L.type !== 'text') return;
-  if (L.lock) { app.toast('Слой заблокирован'); return; }
+function animateText(L, kind, start) {
+  if (!L || L.type !== 'text') return false;
+  if (L.lock) { app.toast('Слой заблокирован'); return false; }
   fixLayer(L);
-  if (!layout(L).n) { app.toast('Сначала напишите текст'); return; }
+  if (!layout(L).n) { app.toast('Сначала напишите текст'); return false; }
   const doc = app.doc, c = L.reveal, A = ANIMS[kind];
-  const f0 = startFrame(), f1 = f0 + durOf(L);
   const erase = kind === 'erase';
-  let v0 = erase ? clamp(evalCh(c, f0), 0, 1) : 0;
-  if (erase && v0 < 0.01) v0 = 1;
+  let f0 = start > 0 ? Math.round(start) : startFrame(), after = '';
+  // стирать ещё не появившийся текст бессмысленно — стирание начнётся, когда он покажется целиком
+  if (erase && evalCh(c, f0) < 0.99) {
+    const full = c.k.find((k) => k.f > f0 && k.v >= 0.99);
+    if (full) { f0 = full.f + Math.round((doc.fps || 24) / 2); after = ' (после появления текста)'; }
+  }
+  const f1 = f0 + durOf(L);
+  const v0 = erase ? clamp(evalCh(c, f0), 0, 1) : 0;
+  if (erase && v0 < 0.01) { app.toast(`На кадре ${f0} текста уже не видно — стирать нечего. Перейдите на кадр, где надпись показана.`, 4000); return false; }
   const interp = kind === 'type' || (erase && (L.revealFx || 'type') === 'type') ? 'linear' : 'ease';
   c.k = c.k.filter((k) => k.f === 0 || k.f < f0 || k.f > f1);
   // до начала печати текста не видно (кадр 0 — поза покоя — остаётся с полным текстом)
@@ -637,8 +663,15 @@ function animateText(L, kind) {
   let longer = '';
   if (f1 > doc.end) { doc.end = f1; longer = ` Сцена удлинена до ${f1} ${plural(f1, ['кадра', 'кадров', 'кадров'])}.`; }
   app.commit(A.name);
-  app.toast(`«${A.name}»: кадры ${f0}–${f1}. Нажмите Пробел, чтобы посмотреть.${longer}`, 4500);
+  app.toast(`«${A.name}»: кадры ${f0}–${f1}${after}. Нажмите Пробел, чтобы посмотреть.${longer}`, 4500);
 }
+
+// Карточки во вкладке «✨ Оживить» («Особые эффекты: Текст») и подписи строк таймлайна
+TYPE.effects = Object.entries(ANIMS).map(([k, A]) => ({
+  id: 'text-' + k, name: A.name, hint: A.title, meta: k === 'erase' ? 'исчезновение' : 'по буквам', anim: k === 'erase' ? 'pz-fadeout 1.8s infinite' : undefined,
+  apply: (L, o) => animateText(L, k, o && o.start),
+}));
+TYPE.channelLabels = { fill: 'Цвет', stroke: 'Обводка', width: 'Толщина', reveal: 'Показано букв' };
 
 function clearAnim(L) {
   const c = L.reveal;
@@ -668,8 +701,8 @@ registerTool({
     }
     if (hit.id !== app.activeId) app.setActive(hit.id);
     if (hit.lock) { app.toast('Слой заблокирован'); return; }
-    const rec = app.scene().layers.get(hit.id);
-    this.st = { L: hit, e, moved: false, Pi: M.inv(M.mul(rec.world, M.inv(rec.local))), pos0: evalCh(hit.pos, app.frame).slice() };
+    const rec = app.scene().layers.get(hit.id), pf = placeFrame(hit);
+    this.st = { L: hit, e, moved: false, pf, Pi: M.inv(M.mul(rec.world, M.inv(rec.local))), pos0: evalCh(hit.pos, pf).slice() };
   },
   move(e) {
     const st = this.st;
@@ -679,7 +712,7 @@ registerTool({
     const a = M.apply(st.Pi, st.e.x, st.e.y), c = M.apply(st.Pi, e.x, e.y);
     let dx = c[0] - a[0], dy = c[1] - a[1];
     if (e.shift) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
-    setKey(st.L.pos, app.frame, [st.pos0[0] + dx, st.pos0[1] + dy]);
+    setKey(st.L.pos, st.pf, [st.pos0[0] + dx, st.pos0[1] + dy]);
     app.setCursor('move');
     app.changed();
   },
@@ -688,7 +721,7 @@ registerTool({
     this.st = null;
     if (!st) return;
     if (st.L) {
-      if (st.moved) app.commit('Перемещение текста');
+      if (st.moved) app.commit(st.pf === 0 && app.frame > 0 ? 'Расстановка слоя' : 'Перемещение текста');
       else openEditor(st.L);
       return;
     }
@@ -707,16 +740,18 @@ registerTool({
   },
 });
 
-// Двойной клик по надписи любым инструментом — редактировать
+// Двойной клик по надписи инструментом «Трансформировать слой» — редактировать
+// (у остальных инструментов двойной клик значит своё — например, два быстрых клика записью движения)
+const DBL_TOOLS = new Set(['ltransform']);
 let dblHit = null;
 registerViewportHandler({
   down(e) {
-    if (!e.dbl || ed || app.tool === 'text') return false;
+    if (!e.dbl || ed || !DBL_TOOLS.has(app.tool)) return false;
     const hit = hitText(e.sx, e.sy);
     if (!hit) return false;
-    const A = app.active, t = tools[app.tool];
-    // двойной клик по фигуре на векторном слое нужен инструментам точек
-    if (A && A !== hit && A.type === 'vector' && t && (t.group === 'draw' || t.group === 'fill') && hitShape(A, e.sx, e.sy)) return false;
+    // поверх невыбранной надписи лежит другой объект — двойной клик относится к нему
+    const pk = hit !== app.active && pickLayerAt(e.sx, e.sy);
+    if (pk && pk.leaf !== hit && pk.leaf.type !== 'text') return false;
     dblHit = hit;
     return true;
   },
@@ -729,7 +764,7 @@ registerViewportHandler({
   },
 });
 
-registerShortcut({ key: 'enter', when: () => !!app.active && app.active.type === 'text' && !ed, run: () => openEditor(app.active) });
+registerShortcut({ key: 'enter', keyLabel: 'Enter', label: 'Изменить текст выбранной надписи прямо на холсте', when: () => !!app.active && app.active.type === 'text' && !ed, run: () => openEditor(app.active) });
 
 registerMenu('Слой', () => {
   const A = app.active;
