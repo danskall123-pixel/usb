@@ -211,7 +211,9 @@ function helpDialog() {
       h('h3', null, 'Инструменты'),
       h('table', { class: 'keys' }, toolRows),
       h('h3', null, 'Горячие клавиши'),
-      h('table', { class: 'keys' }, KEYS.map(([k, v]) => h('tr', null, h('td', null, h('kbd', null, k)), h('td', { colspan: 2 }, v)))),
+      h('table', { class: 'keys' }, KEYS.concat(registry.shortcuts.filter((s) => s.label).map((s) => [(s.shift ? 'Shift+' : '') + (s.alt ? 'Alt+' : '') + (s.keyLabel || s.key.toUpperCase()), s.label]))
+        .filter((x, i, a) => a.findIndex((y) => y[0] === x[0] && y[1] === x[1]) === i)
+        .map(([k, v]) => h('tr', null, h('td', null, h('kbd', null, k)), h('td', { colspan: 2 }, v)))),
       h('p', { class: 'muted' }, 'Клавиши инструментов работают в любой раскладке. Один и тот же ключ выбирает инструмент по типу слоя (например, T — точки на векторном слое и кость на слое костей).'),
     ),
     buttons: [{ label: 'Понятно', primary: true }],
@@ -376,6 +378,10 @@ function onKey(e) {
     if (!e.repeat) { app.spaceHeld = true; app.spaceUsed = false; }
     return;
   }
+  // горячие клавиши модулей (в т.ч. Escape, Enter, стрелки) — раньше стандартных
+  for (const sc of registry.shortcuts) {
+    if (sc.key === k && !!sc.shift === e.shiftKey && !!sc.alt === e.altKey && (!sc.when || sc.when())) { e.preventDefault(); sc.run(e); return; }
+  }
   switch (e.key) {
     case 'ArrowLeft': e.preventDefault(); e.shiftKey ? app.jumpKey(-1) : app.setFrame(app.frame - 1); return;
     case 'ArrowRight': e.preventDefault(); e.shiftKey ? app.jumpKey(1) : app.setFrame(app.frame + 1); return;
@@ -388,9 +394,6 @@ function onKey(e) {
     case '-': case '_': app.zoomView(0.8); return;
   }
   if (e.code === 'Quote') { toggleOpt('grid'); return; }
-  for (const sc of registry.shortcuts) {
-    if (sc.key === k && !!sc.shift === e.shiftKey && !!sc.alt === e.altKey && (!sc.when || sc.when())) { e.preventDefault(); sc.run(e); return; }
-  }
   if (e.altKey) return;
   if (k === 'k') { app.keyLayer(); return; }
   const t = toolForKey(k);

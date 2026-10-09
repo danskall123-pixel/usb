@@ -75,7 +75,7 @@ export function initViewport(el) {
       octx.globalAlpha = 1;
       octx.clearRect(0, 0, W, H);
       octx.setTransform(...VC);
-      onionR.drawLayers(octx, doc.layers, S2, { images: app.images, px: dpr * app.view.z, filter });
+      onionR.drawLayers(octx, doc.layers, S2, { images: app.images, px: dpr * app.view.z, filter, onion: true });
       octx.setTransform(1, 0, 0, 1, 0, 0);
       octx.globalCompositeOperation = 'source-atop';
       octx.fillStyle = before ? 'rgba(255,70,90,.62)' : 'rgba(40,160,255,.62)';

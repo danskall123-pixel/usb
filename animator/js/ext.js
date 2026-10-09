@@ -34,6 +34,9 @@ export const registry = {
     vectorTarget: [], // (activeLayer) → векторный слой, в который рисовать, или null
     docLoaded: [],    // (doc) => void
     firstRun: [],     // () => void — первый запуск (вместо приветственного уведомления)
+    beforeCommit: [], // (label, doc) => void — нормализовать документ перед снимком истории
+    layerIcon: [],    // (L) => имя иконки | null — своя иконка для конкретного слоя
+    layerLabel: [],   // (L) => подпись типа | null
   },
   // Шаблоны нового проекта: { id, name, description, order, build() → doc }
   templates: [],

@@ -134,7 +134,7 @@ export function shiftKeys(c, frames, d, copy) {
   for (const k of moving) {
     const nf = Math.max(1, k.f + d);
     const at = c.k.findIndex((x) => x.f === nf);
-    const nk = { f: nf, v: cp(k.v), i: k.i };
+    const nk = { ...k, f: nf, v: cp(k.v) };
     if (at >= 0) c.k[at] = nk; else c.k.push(nk);
   }
   c.k.sort((a, b) => a.f - b.f);

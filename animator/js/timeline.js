@@ -9,6 +9,7 @@ import { registry } from './ext.js';
 
 let NAME_W = 210;
 const RULER = 24, ROW = 22;
+const CH_LABELS = { fill: 'Цвет', stroke: 'Обводка', width: 'Толщина', reveal: 'Показано букв', amt: 'Количество', color: 'Цвет', size: 'Размер' };
 const TYPE_COL = { vector: '#ffb054', group: '#9aa3ad', bone: '#4c9dff', switch: '#d38bff', image: '#57c9a6', audio: '#ff6fd8' };
 
 export function initTimeline(root) {
@@ -103,6 +104,15 @@ export function initTimeline(root) {
             out.push({ id: rid + ':sty', label: 'Стиль', depth: d, layer: L, chans: styleChannels(L), sub: true });
           }
           if (L.type === 'switch') out.push({ id: rid + ':sw', label: 'Переключение', depth: d, layer: L, chans: [L.sw], sub: true });
+          const xt = registry.layerTypes[L.type];
+          if (xt && xt.channels) {
+            // строки каналов типов слоёв из модулей: rows(L) → [{ label, chans }] или по имени поля
+            const rows = xt.rows ? xt.rows(L) : xt.channels(L).map((c) => {
+              const key = Object.keys(L).find((k) => L[k] === c);
+              return { label: (xt.channelLabels && xt.channelLabels[key]) || CH_LABELS[key] || key || 'Канал', chans: [c] };
+            });
+            rows.forEach((rw, j) => out.push({ id: rid + ':x' + j, label: rw.label, depth: d, layer: L, chans: rw.chans, sub: true }));
+          }
           if (L.type === 'bone') for (const b of L.bones) out.push({ id: rid + ':b' + b.id, label: b.name, depth: d, layer: L, bone: b, col: boneColor(L, b.id), chans: boneChannels(b), names: ['Положение', 'Угол', 'Масштаб'], sub: true });
         }
         if (L.children && L.open) walk(L.children, depth + 1);

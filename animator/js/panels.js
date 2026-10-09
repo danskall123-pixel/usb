@@ -11,6 +11,8 @@ import { registry } from './ext.js';
 const TYPE_ICON0 = { vector: 'vector', group: 'group', bone: 'bone', switch: 'switch', image: 'image', audio: 'audio' };
 export const TYPE_ICON = new Proxy(TYPE_ICON0, { get: (o, k) => o[k] || (registry.layerTypes[k] && registry.layerTypes[k].icon) || 'vector' });
 const LAYER_TYPES = new Proxy({}, { get: (o, k) => typeLabel(k) });
+export const layerIcon = (L) => { for (const fn of registry.hooks.layerIcon || []) { const r = fn(L); if (r) return r; } return TYPE_ICON[L.type]; };
+export const layerLabel = (L) => { for (const fn of registry.hooks.layerLabel || []) { const r = fn(L); if (r) return r; } return LAYER_TYPES[L.type]; };
 const creatableTypes = () => ['vector', 'group', 'bone', 'switch'].concat(Object.keys(registry.layerTypes).filter((t) => registry.layerTypes[t].creatable));
 
 export function setTool(id) {
@@ -95,6 +97,7 @@ export function initOptbar(el) {
       tog('snap', 'Привязка к сетке', 'snap'),
       tog('bones', 'Показывать кости', 'showBones'),
       tog('onion', 'Луковая кожа (кадры до/после)', 'onion'),
+      ...registry.optbarButtons.map((fn) => { try { return fn() || ''; } catch (e) { console.error(e); return ''; } }),
       iconBtn('fit', 'Вписать в окно (Ctrl+0)', () => app.fitView()),
       h('button', { class: 'btn sm ghost', title: 'Масштаб 100% (Ctrl+1)', onclick: () => app.zoomView(1 / app.view.z) }, '100%'),
     ));
@@ -130,7 +133,8 @@ export function initLayers(el) {
   const addBtn = iconBtn('plus', 'Новый слой', (e) => {
     const r = e.currentTarget.getBoundingClientRect();
     showMenu(creatableTypes().map((t) => ({ label: LAYER_TYPES[t], icon: TYPE_ICON[t], action: () => app.addLayer(t) }))
-      .concat([{ sep: true }, { label: 'Изображение…', icon: 'image', action: () => app.emit('importImage') }, { label: 'Аудио…', icon: 'audio', action: () => app.emit('importAudio') }]), r.left, r.bottom + 4);
+      .concat([{ sep: true }, { label: 'Изображение…', icon: 'image', action: () => app.emit('importImage') }, { label: 'Аудио…', icon: 'audio', action: () => app.emit('importAudio') }])
+      .concat(registry.sideTabs.some((t) => t.id === 'library') ? [{ sep: true }, { label: 'Из библиотеки…', icon: 'group', action: () => app.showSideTab('library') }] : []), r.left, r.bottom + 4);
   });
   el.append(
     h('div', { class: 'panel-head' }, h('span', null, 'Слои'), h('div', { class: 'panel-tools' },
@@ -161,7 +165,7 @@ export function initLayers(el) {
       style: { paddingLeft: 4 + depth * 14 + 'px' },
     },
       L.children ? h('button', { class: 'lexp', 'aria-label': L.open ? 'Свернуть' : 'Развернуть', onclick: (e) => { e.stopPropagation(); L.open = !L.open; app.refresh(['layers', 'timeline']); } }, icon(L.open ? 'down' : 'right', 14)) : h('span', { class: 'lexp-sp' }),
-      icon(TYPE_ICON[L.type], 16, 'ltype t-' + L.type),
+      icon(layerIcon(L), 16, 'ltype t-' + L.type),
       name,
       isMaskSrc ? h('span', { class: 'lbadge', title: 'Маска группы' }, icon('mask', 12)) : null,
       bindName ? h('span', { class: 'lbadge', title: 'Привязан к кости «' + bindName + '»' }, icon('link', 12)) : null,
@@ -282,7 +286,7 @@ export function initInspector(el) {
   function layerSection(L) {
     const kids = [];
     const nm = h('input', { class: 'txt', value: L.name, 'aria-label': 'Имя слоя', onkeydown: (e) => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); }, onchange: (e) => { L.name = e.target.value || L.name; app.commit('Переименование'); } });
-    kids.push(row(icon(TYPE_ICON[L.type], 16), nm));
+    kids.push(row(icon(layerIcon(L), 16), nm));
     const ch2 = (c, i, v) => { const cur = evalCh(c, f()).slice(); cur[i] = v; setKey(c, f(), cur); };
     const px = upd(numField('X', evalCh(L.pos, f())[0], { step: 1, prec: 1, onLive: (v) => { ch2(L.pos, 0, v); live(); }, onCommit: () => app.commit('Положение слоя') }), () => evalCh(L.pos, f())[0]);
     const py = upd(numField('Y', evalCh(L.pos, f())[1], { step: 1, prec: 1, onLive: (v) => { ch2(L.pos, 1, v); live(); }, onCommit: () => app.commit('Положение слоя') }), () => evalCh(L.pos, f())[1]);
@@ -356,7 +360,7 @@ export function initInspector(el) {
       const np = L.paths.reduce((s, p) => s + p.pts.length, 0);
       kids.push(h('div', { class: 'insp-note' }, `Фигур: ${L.paths.length} · точек: ${np}`));
     }
-    return sec('Слой · ' + LAYER_TYPES[L.type], ...kids);
+    return sec('Слой · ' + layerLabel(L), ...kids);
   }
 
   function pointsSection(L) {
@@ -434,7 +438,8 @@ export function initInspector(el) {
     el.textContent = '';
     updaters = [];
     const L = app.active;
-    el.append(styleSection());
+    // стиль фигур показываем для векторных слоёв и обычных типов; у типов из модулей — свои настройки
+    if (!L || !registry.layerTypes[L.type] || registry.layerTypes[L.type].showStyle) el.append(styleSection());
     if (L) {
       if (L.type === 'vector') { const ps = pointsSection(L); if (ps) el.append(ps); }
       if (L.type === 'bone') el.append(boneSection(L));

@@ -50,6 +50,8 @@ function buildMenu(items) {
         sub.style.top = rr.top - pr.top - 4 + 'px';
         const sr = sub.getBoundingClientRect();
         if (sr.right > window.innerWidth) sub.style.left = -sr.width + 2 + 'px';
+        const over = sr.bottom - (window.innerHeight - 4);
+        if (over > 0) sub.style.top = Math.max(4 - pr.top, rr.top - pr.top - 4 - over) + 'px';
       });
     } else {
       row.addEventListener('pointerenter', () => el.querySelectorAll(':scope > .menu.sub').forEach((s) => s.remove()));

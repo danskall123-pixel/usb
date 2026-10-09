@@ -46,7 +46,7 @@ export function boneMats(B, f) {
   return out;
 }
 
-let wcache = new Map();
+let wcache = new Map(), wdoc = null;
 export function invalidateWeights() { wcache = new Map(); }
 
 function flexWeights(bc, ptId, x, y) {
@@ -96,6 +96,8 @@ function makeBoneCtx(B, f, world) {
 }
 
 export function evaluate(doc, f) {
+  // кэш весов привязан к документу (превью и миниатюры вычисляют другие документы)
+  if (doc !== wdoc) { wcache = new Map(); wdoc = doc; }
   const S = { f, layers: new Map(), points: new Map(), cam: camMatrix(doc, f) };
   const ctx = { world: M.id(), bc: null, rel: null, rel0: null, bind: null };
   for (const L of doc.layers) evalLayer(S, L, ctx, f);

@@ -53,6 +53,7 @@ export function initPlayback() {
     t0 = performance.now();
     startAudio(f0);
     raf = requestAnimationFrame(tick);
+    app.emit('playstate', true);
     app.refresh(['timeline']);
     app.render();
   }
@@ -61,6 +62,7 @@ export function initPlayback() {
     cancelAnimationFrame(raf);
     stopAudio();
     app.playing = false;
+    app.emit('playstate', false);
     app.refresh(['timeline']);
     app.render();
   }

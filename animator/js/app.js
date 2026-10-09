@@ -105,10 +105,11 @@ export const app = {
 
   // Завершённое действие → история
   commit(label = 'Изменение') {
+    for (const hk of registry.hooks.beforeCommit || []) try { hk(label, this.doc); } catch (e) { console.error(e); }
     invalidateWeights();
     if (this.history.push(snapshot(this.doc), label)) {
       this.dirty = true;
-      this.emit('commit');
+      this.emit('commit', label);
     }
     this.refresh();
     this.render();
@@ -148,6 +149,7 @@ export const app = {
   setActive(id) {
     if (id === this.activeId) return;
     this.activeId = id;
+    this.emit('active', id);
     this.sel.pts.clear();
     this.sel.paths.clear();
     const L = this.active;
