@@ -151,6 +151,10 @@ kbd { display: inline-block; min-width: 20px; padding: 1px 6px; border-radius: 4
 .side-tab:hover { color: var(--text); background: var(--bg2); }
 .side-tab.on { color: #fff; border-bottom-color: var(--accent); }
 .side-tab.on .ic { color: var(--accent); }
+#side .side-tabs.compact { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.side-tabs.compact::-webkit-scrollbar { display: none; }
+.side-tabs.compact .side-tab:not(.on) .side-tab-l, .side-tabs.compact2 .side-tab .side-tab-l { display: none; }
+.side-tabs.compact .side-tab { padding: 5px 7px 6px; flex: none; }
 .side-body { flex: 1; min-height: 0; position: relative; }
 .side-body > * { position: absolute; inset: 0; overflow-y: auto; scrollbar-width: thin; }
 .side-body > [hidden] { display: none; }
@@ -222,7 +226,7 @@ select { background: var(--bg0); border: 1px solid var(--line2); border-radius: 
 .st-pos { font-variant-numeric: tabular-nums; min-width: 120px; text-align: right; }
 
 /* ---------- уведомления / диалоги ---------- */
-.toasts { position: fixed; left: 50%; bottom: 280px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; z-index: 2000; pointer-events: none; }
+.toasts { position: fixed; left: 50%; bottom: 280px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; z-index: 900; pointer-events: none; }
 .toast { max-width: min(560px, 90vw); padding: 8px 14px; border-radius: 8px; background: rgba(40,43,49,.96); border: 1px solid var(--line2); color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,.4); animation: tin .18s ease-out; text-align: center; }
 .toast.out { opacity: 0; transform: translateY(6px); transition: .3s; }
 @keyframes tin { from { opacity: 0; transform: translateY(8px); } }
@@ -249,6 +253,21 @@ select { background: var(--bg0); border: 1px solid var(--line2); border-radius: 
 .keys .ic { vertical-align: -3px; color: var(--accent); }
 
 /* ---------- узкие экраны ---------- */
+/* невысокие окна (ноутбуки): ниже таймлайн, компактнее панели — больше места холсту и вкладкам */
+@media (max-height: 820px) {
+  #timeline { height: 184px; }
+  #side { grid-template-rows: minmax(104px, 30%) minmax(0, 1fr); }
+  .tb-btn { height: 29px; }
+  .tb-group { padding-top: 4px; margin-top: 2px; }
+  .toasts { bottom: 216px; }
+}
+@media (max-height: 700px) {
+  #timeline { height: 156px; }
+  #side { grid-template-rows: minmax(92px, 26%) minmax(0, 1fr); }
+  .tb-btn { height: 27px; }
+  .tb-group { font-size: 8.5px; padding-top: 3px; }
+  .toasts { bottom: 186px; }
+}
 @media (max-width: 1100px) {
   .ob-hint { display: none; }
   .logo span { display: none; }

@@ -501,7 +501,11 @@ const EXTENSIONS = ['presets', 'record', 'followpath', 'motionpath', 'keyops', '
 async function loadExtensions() {
   const q = new URLSearchParams(location.search).get('ext');
   const list = q === null ? EXTENSIONS : q ? q.split(',').filter(Boolean) : [];
-  await Promise.all(list.map((n) => import(`./ext/${n}.js`).catch((e) => console.error(`Модуль «${n}» не загружен:`, e))));
+  // все файлы грузятся параллельно (modulepreload), а выполняются строго по порядку — стабильный порядок инструментов и меню
+  for (const n of list) document.head.append(h('link', { rel: 'modulepreload', href: new URL(`./ext/${n}.js`, import.meta.url).href }));
+  for (const n of list) {
+    try { await import(`./ext/${n}.js`); } catch (e) { console.error(`Модуль «${n}» не загружен:`, e); }
+  }
 }
 
 // Доступ из консоли браузера для отладки и скриптов

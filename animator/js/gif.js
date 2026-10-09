@@ -2,42 +2,44 @@
 
 function rgb15(r, g, b) { return ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3); }
 
+// Палитра: делим ячейку с наибольшей суммарной ошибкой (SSE) там, где ошибка двух половин минимальна
+// (в духе Wu) — так редкие, но заметные цвета (солнце, одежда) не тонут в массе похожих оттенков.
 function buildPalette(hist, maxColors) {
+  const ch = (c, k) => (k === 0 ? (c >> 10) & 31 : k === 1 ? (c >> 5) & 31 : c & 31);
   const colors = [];
   for (let i = 0; i < 32768; i++) if (hist[i]) colors.push(i);
-  const ch = (c, k) => (k === 0 ? (c >> 10) & 31 : k === 1 ? (c >> 5) & 31 : c & 31);
-  const avg = (list) => {
-    let r = 0, g = 0, b = 0, n = 0;
-    for (const c of list) { const w = hist[c]; r += ch(c, 0) * w; g += ch(c, 1) * w; b += ch(c, 2) * w; n += w; }
-    n = n || 1;
-    return [Math.round((r / n) * 8.2258), Math.round((g / n) * 8.2258), Math.round((b / n) * 8.2258)];
-  };
-  if (colors.length <= maxColors) return colors.map((c) => avg([c]));
-  const boxes = [colors];
-  const range = (list) => {
-    const mn = [31, 31, 31], mx = [0, 0, 0];
-    for (const c of list) for (let k = 0; k < 3; k++) { const v = ch(c, k); if (v < mn[k]) mn[k] = v; if (v > mx[k]) mx[k] = v; }
-    let best = 0, bk = 0;
-    for (let k = 0; k < 3; k++) if (mx[k] - mn[k] > best) { best = mx[k] - mn[k]; bk = k; }
-    return [best, bk];
-  };
-  while (boxes.length < maxColors) {
-    let bi = -1, bs = -1, bk = 0;
-    for (let i = 0; i < boxes.length; i++) {
-      if (boxes[i].length < 2) continue;
-      const [r, k] = range(boxes[i]);
-      let cnt = 0;
-      for (const c of boxes[i]) cnt += hist[c];
-      const s = r * Math.sqrt(cnt);
-      if (s > bs) { bs = s; bi = i; bk = k; }
+  const stat = (list) => {
+    let n = 0, r = 0, g = 0, b = 0, q = 0;
+    for (const c of list) {
+      const w = hist[c], x = ch(c, 0), y = ch(c, 1), z = ch(c, 2);
+      n += w; r += w * x; g += w * y; b += w * z; q += w * (x * x + y * y + z * z);
     }
-    if (bi < 0 || bs <= 0) break;
-    const list = boxes[bi].sort((a, b) => ch(a, bk) - ch(b, bk));
-    let total = 0;
-    for (const c of list) total += hist[c];
-    let acc = 0, cut = 1;
-    for (let i = 0; i < list.length - 1; i++) { acc += hist[list[i]]; if (acc >= total / 2) { cut = i + 1; break; } }
-    boxes.splice(bi, 1, list.slice(0, cut), list.slice(cut));
+    return { list, n, r, g, b, sse: n ? q - (r * r + g * g + b * b) / n : 0 };
+  };
+  const avg = (bx) => [bx.r, bx.g, bx.b].map((v) => Math.round((v / (bx.n || 1)) * 8.2258));
+  if (colors.length <= maxColors) return colors.map((c) => avg(stat([c])));
+  const boxes = [stat(colors)];
+  while (boxes.length < maxColors) {
+    let bi = -1;
+    for (let i = 0; i < boxes.length; i++) if (boxes[i].list.length > 1 && (bi < 0 || boxes[i].sse > boxes[bi].sse)) bi = i;
+    if (bi < 0 || boxes[bi].sse <= 1e-9) break;
+    const bx = boxes[bi];
+    let best = null;
+    for (let k = 0; k < 3; k++) {
+      const list = bx.list.slice().sort((a, b) => ch(a, k) - ch(b, k));
+      let n = 0, r = 0, g = 0, b = 0, q = 0;
+      const T = { n: bx.n, r: bx.r, g: bx.g, b: bx.b, q: bx.sse + (bx.r * bx.r + bx.g * bx.g + bx.b * bx.b) / bx.n };
+      for (let i = 0; i < list.length - 1; i++) {
+        const c = list[i], w = hist[c], x = ch(c, 0), y = ch(c, 1), z = ch(c, 2);
+        n += w; r += w * x; g += w * y; b += w * z; q += w * (x * x + y * y + z * z);
+        if (ch(list[i + 1], k) === ch(c, k)) continue;
+        const nR = T.n - n, rR = T.r - r, gR = T.g - g, bR = T.b - b, qR = T.q - q;
+        const e = (q - (r * r + g * g + b * b) / n) + (qR - (rR * rR + gR * gR + bR * bR) / nR);
+        if (!best || e < best.e) best = { e, list, cut: i + 1 };
+      }
+    }
+    if (!best) break;
+    boxes.splice(bi, 1, stat(best.list.slice(0, best.cut)), stat(best.list.slice(best.cut)));
   }
   return boxes.map(avg);
 }

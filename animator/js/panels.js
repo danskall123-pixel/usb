@@ -3,7 +3,7 @@ import { app } from './app.js';
 import { h } from './util.js';
 import { icon } from './icons.js';
 import { setKey, evalCh } from './anim.js';
-import { tools, TOOL_ORDER, GROUPS, cleanupPaths } from './tools.js';
+import { tools, TOOL_ORDER, GROUPS, cleanupPaths, placeFrame } from './tools.js';
 import { BLEND_MODES, typeLabel, boneAncestor } from './model.js';
 import { numField, rangeField, checkField, selectField, colorField, showMenu, iconBtn } from './ui.js';
 import { registry } from './ext.js';
@@ -107,8 +107,9 @@ export function initOptbar(el) {
 // ---------- Слои ----------
 export function layerMenu(L) {
   const sub = (type) => ({ label: LAYER_TYPES[type], icon: TYPE_ICON[type], action: () => app.addLayer(type) });
+  const extraNew = (registry.menus['Новый слой'] || []).flatMap((fn) => { try { return fn() || []; } catch (e) { console.error(e); return []; } });
   return [
-    { label: 'Новый слой', sub: creatableTypes().map(sub) },
+    { label: 'Новый слой', sub: creatableTypes().map(sub).concat(extraNew.length ? [{ sep: true }, ...extraNew] : []) },
     { sep: true },
     { label: 'Переименовать', disabled: !L, action: () => L && renameLayer(L) },
     { label: 'Дублировать', icon: 'copy', key: 'Ctrl+D', disabled: !L, action: () => app.duplicateLayer(L) },
@@ -132,7 +133,8 @@ export function initLayers(el) {
   const list = h('div', { class: 'layers-list', role: 'tree', 'aria-label': 'Слои' });
   const addBtn = iconBtn('plus', 'Новый слой', (e) => {
     const r = e.currentTarget.getBoundingClientRect();
-    showMenu(creatableTypes().map((t) => ({ label: LAYER_TYPES[t], icon: TYPE_ICON[t], action: () => app.addLayer(t) }))
+    const extraNew = (registry.menus['Новый слой'] || []).flatMap((fn) => { try { return fn() || []; } catch (er) { console.error(er); return []; } });
+    showMenu(creatableTypes().map((t) => ({ label: LAYER_TYPES[t], icon: TYPE_ICON[t], action: () => app.addLayer(t) })).concat(extraNew.length ? [{ sep: true }, ...extraNew] : [])
       .concat([{ sep: true }, { label: 'Изображение…', icon: 'image', action: () => app.emit('importImage') }, { label: 'Аудио…', icon: 'audio', action: () => app.emit('importAudio') }])
       .concat(registry.sideTabs.some((t) => t.id === 'library') ? [{ sep: true }, { label: 'Из библиотеки…', icon: 'group', action: () => app.showSideTab('library') }] : []), r.left, r.bottom + 4);
   });
@@ -287,10 +289,10 @@ export function initInspector(el) {
     const kids = [];
     const nm = h('input', { class: 'txt', value: L.name, 'aria-label': 'Имя слоя', onkeydown: (e) => { e.stopPropagation(); if (e.key === 'Enter') e.target.blur(); }, onchange: (e) => { L.name = e.target.value || L.name; app.commit('Переименование'); } });
     kids.push(row(icon(layerIcon(L), 16), nm));
-    const ch2 = (c, i, v) => { const cur = evalCh(c, f()).slice(); cur[i] = v; setKey(c, f(), cur); };
+    const ch2 = (c, i, v) => { const cur = evalCh(c, f()).slice(); cur[i] = v; setKey(c, placeFrame(L), cur); };
     const px = upd(numField('X', evalCh(L.pos, f())[0], { step: 1, prec: 1, onLive: (v) => { ch2(L.pos, 0, v); live(); }, onCommit: () => app.commit('Положение слоя') }), () => evalCh(L.pos, f())[0]);
     const py = upd(numField('Y', evalCh(L.pos, f())[1], { step: 1, prec: 1, onLive: (v) => { ch2(L.pos, 1, v); live(); }, onCommit: () => app.commit('Положение слоя') }), () => evalCh(L.pos, f())[1]);
-    const rot = upd(numField('Поворот', evalCh(L.rot, f()), { step: 1, prec: 1, unit: '°', onLive: (v) => { setKey(L.rot, f(), v); live(); }, onCommit: () => app.commit('Поворот слоя') }), () => evalCh(L.rot, f()));
+    const rot = upd(numField('Поворот', evalCh(L.rot, f()), { step: 1, prec: 1, unit: '°', onLive: (v) => { setKey(L.rot, placeFrame(L), v); live(); }, onCommit: () => app.commit('Поворот слоя') }), () => evalCh(L.rot, f()));
     const sx = upd(numField('Масшт X', evalCh(L.scl, f())[0], { step: 0.01, prec: 3, onLive: (v) => { ch2(L.scl, 0, v); live(); }, onCommit: () => app.commit('Масштаб слоя') }), () => evalCh(L.scl, f())[0]);
     const sy = upd(numField('Y', evalCh(L.scl, f())[1], { step: 0.01, prec: 3, onLive: (v) => { ch2(L.scl, 1, v); live(); }, onCommit: () => app.commit('Масштаб слоя') }), () => evalCh(L.scl, f())[1]);
     const op = upd(rangeField('Непрозрачн.', evalCh(L.op, f()), { min: 0, max: 1, step: 0.01, onLive: (v) => { setKey(L.op, f(), v); live(); }, onCommit: () => app.commit('Непрозрачность') }), () => evalCh(L.op, f()));
@@ -478,14 +480,22 @@ export function initSideTabs(bar, body, inspectorEl) {
     if (tab && tab.refresh) try { tab.refresh(); } catch (e) { console.error(e); }
     renderBar();
   };
+  // вкладки не влезают в одну строку → только значки (подпись у активной), затем совсем без подписей
+  const fit = () => {
+    bar.classList.remove('compact', 'compact2');
+    if (bar.scrollHeight > 40) bar.classList.add('compact');
+    if (bar.scrollWidth > bar.clientWidth + 1) bar.classList.add('compact2');
+  };
+  new ResizeObserver(() => fit()).observe(bar.parentElement);
   const renderBar = () => {
     bar.textContent = '';
     const all = [{ id: 'props', title: 'Свойства', icon: 'settings' }, ...registry.sideTabs];
     bar.hidden = all.length < 2;
     for (const t of all) {
       bar.append(h('button', { class: 'side-tab' + (t.id === current ? ' on' : ''), role: 'tab', 'aria-selected': t.id === current, title: t.title, onclick: () => show(t.id) },
-        icon(t.icon || 'plus', 15), h('span', null, t.title)));
+        icon(t.icon || 'plus', 15), h('span', { class: 'side-tab-l' }, t.title)));
     }
+    fit();
   };
   registry.onTabs = renderBar;
   app.showSideTab = show;

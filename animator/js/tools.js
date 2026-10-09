@@ -3,7 +3,9 @@ import { app, reparentBone } from './app.js';
 import {
   M, RAD, DEG, clamp, distToSeg, rdp, bezierSegs, cubicAt, nearestOnSegs, pointInPoly, OVAL_CURV, normAngle, segsPath, rgba,
 } from './util.js';
-import { setKey, evalCh } from './anim.js';
+import { setKey, evalCh, isAnimated } from './anim.js';
+import { activeSwitchChild } from './render.js';
+import { registry } from './ext.js';
 import { newPoint, newPath, newBone, boneColor, boneDescendants } from './model.js';
 import { boneMats, layerWorldPoints } from './scene.js';
 
@@ -129,9 +131,72 @@ export function applyDrag(items, fn) {
   const f = app.frame;
   for (const it of items) {
     const [nx, ny] = fn(it);
-    setKey(it.pt.pos, f, M.apply(it.Fi, nx, ny));
+    if (it.place === undefined) {
+      // правка ещё не анимированной точки на первом кадре сцены — это настройка формы, а не ключ
+      const info = app.idx.points.get(it.pt.id);
+      it.place = f > 0 && f <= app.doc.start && !isAnimated(it.pt.pos) && !(info && app.boneLayerFor(info.layer));
+    }
+    setKey(it.pt.pos, it.place ? 0 : f, M.apply(it.Fi, nx, ny));
   }
   app.changed();
+}
+
+// Самый верхний видимый незаблокированный слой под точкой экрана → { leaf, path } или null.
+// Полноэкранные эффекты (частицы, фон-картинка во весь кадр) не перехватывают клик.
+export function pickLayerAt(sx, sy) {
+  const S0 = S();
+  const frameArea = app.doc.w * app.doc.h;
+  const boxHit = (L) => {
+    const bb = layerBox(L);
+    if (!bb) return false;
+    const poly = [[bb.x0, bb.y0], [bb.x1, bb.y0], [bb.x1, bb.y1], [bb.x0, bb.y1]].map(([x, y]) => bb.toS(x, y));
+    if (!pointInPoly(sx, sy, poly)) return false;
+    const rec = S0.layers.get(L.id);
+    const area = Math.abs((bb.x1 - bb.x0) * (bb.y1 - bb.y0)) * Math.abs(rec.world[0] * rec.world[3] - rec.world[1] * rec.world[2]);
+    return area < frameArea * 0.8;
+  };
+  const leafHit = (L) => {
+    if (L.type === 'vector') return !!hitShape(L, sx, sy);
+    if (L.type === 'audio') return false;
+    const ext = registry.layerTypes[L.type];
+    if (ext && ext.hit) { const [x, y] = app.toDoc(sx, sy); return !!ext.hit(L, S0.layers.get(L.id), x, y); }
+    if (ext && ext.pick === false) return false;
+    return boxHit(L);
+  };
+  const walk = (list, path) => {
+    for (let i = list.length - 1; i >= 0; i--) {
+      const L = list[i];
+      if (!L.vis || L.lock) continue;
+      const p = path.concat(L);
+      if (L.type === 'switch') {
+        const c = activeSwitchChild(L, app.frame);
+        if (c && c.vis && !c.lock) { const r = c.children ? walk(c.children, p.concat(c)) : leafHit(c) ? { leaf: c, path: p.concat(c) } : null; if (r) return r; }
+        continue;
+      }
+      if (L.children) { const r = walk(L.children, p); if (r) return r; if (registry.layerTypes[L.type] && leafHit(L)) return { leaf: L, path: p }; continue; }
+      if (leafHit(L)) return { leaf: L, path: p };
+    }
+    return null;
+  };
+  return walk(app.doc.layers, []);
+}
+
+// Какой слой выбирать по клику: в простом режиме — весь объект (слой верхнего уровня),
+// иначе — персонаж целиком (ближайший слой костей) или сам слой.
+export function pickTarget(hit) {
+  if (!hit) return null;
+  if (app.opts.simple) return hit.path[0];
+  for (let i = hit.path.length - 1; i >= 0; i--) if (hit.path[i].type === 'bone') return hit.path[i];
+  const sw = hit.path.find((x) => x.type === 'switch');
+  return sw || hit.leaf;
+}
+
+// Кадр, на который пишется трансформация слоя: на первом кадре сцены у ещё не анимированного слоя —
+// это расстановка (кадр 0), а не ключ анимации.
+export function placeFrame(L) {
+  const f = app.frame;
+  if (f > 0 && f <= app.doc.start && ![L.pos, L.rot, L.scl].some(isAnimated)) return 0;
+  return f;
 }
 
 function moveItems(st, e) {
@@ -1191,7 +1256,7 @@ export function layerBox(L) {
 
 def({
   id: 'ltransform', simple: true, name: 'Трансформировать слой', icon: 'move', key: 'm', group: 'layer', avail: () => !!app.active,
-  hint: 'Тяните — переместить слой. Ручки рамки — масштаб (Shift — пропорционально), за углами — поворот вокруг точки вращения.',
+  hint: 'Клик по объекту — выбрать его, тяните — переместить. Ручки рамки — масштаб (Shift — пропорционально), за углами — поворот. Alt — двигать текущий слой.',
   options: () => [{ type: 'button', label: 'Сбросить трансформацию', action: () => {
     const L = app.active;
     if (!L) return;
@@ -1199,10 +1264,18 @@ def({
     app.commit('Сброс трансформации');
   } }],
   down(e) {
-    const L = app.active;
+    let L = app.active;
     this.L = null;
+    // клик по другому объекту выбирает его (Alt — двигать текущий слой, где бы ни нажали)
+    const bb0 = L && layerBox(L);
+    if (!e.alt && !(bb0 && handleAt(bb0, e.sx, e.sy))) {
+      const T = pickTarget(pickLayerAt(e.sx, e.sy));
+      if (T && T !== L) { app.setActive(T.id); app.rescene(); L = T; }
+      else if (!T && app.opts.simple) return;
+    }
     if (!L || L.lock) { if (L) app.toast('Слой заблокирован'); return; }
-    const rec = recOf(L), f = app.frame;
+    const rec = recOf(L), f = placeFrame(L);
+    this.f = f;
     this.L = L; this.start = e; this.moved = false;
     this.Pi = M.inv(M.mul(rec.world, M.inv(rec.local)));
     this.pos0 = evalCh(L.pos, f).slice(); this.rot0 = evalCh(L.rot, f); this.scl0 = evalCh(L.scl, f).slice();
@@ -1217,7 +1290,7 @@ def({
     if (!L) return;
     if (!this.moved && Math.hypot(e.sx - this.start.sx, e.sy - this.start.sy) < 2) return;
     this.moved = true;
-    const f = app.frame;
+    const f = this.f;
     const a = M.apply(this.Pi, this.start.x, this.start.y), c = M.apply(this.Pi, e.x, e.y);
     const o = this.piv;
     if (this.mode === 'move') {
@@ -1241,11 +1314,18 @@ def({
     }
     app.changed();
   },
-  up() { if (this.L && this.moved) app.commit('Трансформация слоя'); this.L = null; },
+  up() {
+    if (this.L && this.moved) {
+      app.commit(this.f === 0 && app.frame > 0 ? 'Расстановка слоя' : 'Трансформация слоя');
+      if (this.f === 0 && app.frame > 0 && !this.placedHint) { this.placedHint = true; app.toast('Объект переставлен (это не ключ анимации). Чтобы оживить — «✨ Оживить» или перейдите на другой кадр и подвиньте.', 4200); }
+    }
+    this.L = null;
+  },
   hover(e) {
     const L = app.active;
     const bb = L && layerBox(L);
     const hd = bb && handleAt(bb, e.sx, e.sy);
+    if (!hd && !e.alt) { const T = pickTarget(pickLayerAt(e.sx, e.sy)); if (T && T !== L) { app.setCursor('pointer'); return; } }
     app.setCursor(hd && hd.type === 'rotate' ? 'alias' : hd && hd.type === 'scale' ? 'nwse-resize' : 'move');
   },
   overlay(ctx) {

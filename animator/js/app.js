@@ -62,10 +62,15 @@ export const app = {
     this.doc = migrate(doc);
     this.idx = buildIndex(this.doc);
     this.frame = clamp(this.frame, 0, Math.max(this.doc.end, 1));
-    if (!keepView) this.frame = 0;
+    // открываем на первом кадре сцены — так всё стоит там же, где при просмотре
+    if (!keepView) this.frame = this.doc.start > 0 && this.idx.list.length ? this.doc.start : 0;
     this.activeId = null;
     this.clearSel();
-    const first = this.idx.list.find((L) => L.type === 'vector') || this.idx.list[0];
+    // активный слой — верхний видимый незаблокированный (не фон и не звук), лучше векторный
+    const top = [];
+    const walk = (arr, lockedUp) => { for (let i = arr.length - 1; i >= 0; i--) { const L = arr[i]; const lk = lockedUp || L.lock; if (!lk && L.vis && L.type !== 'audio') top.push(L); if (L.children) walk(L.children, lk); } };
+    walk(this.doc.layers, false);
+    const first = top.find((L) => L.type === 'vector') || top[0] || this.idx.list[0];
     if (first) this.activeId = first.id;
     this.history.reset(snapshot(this.doc));
     invalidateWeights();
@@ -188,9 +193,15 @@ export const app = {
     this.clearSel();
     this.fixTool();
   },
+  // «Слой 3» — следующий свободный номер
+  freeName(base) {
+    const used = new Set(this.idx.list.map((l) => l.name));
+    let n = 1;
+    while (used.has(base + ' ' + n)) n++;
+    return base + ' ' + n;
+  },
   addLayer(type, name) {
-    const n = this.idx.list.filter((l) => l.type === type).length + 1;
-    const nm = name || ({ vector: 'Слой', group: 'Группа', bone: 'Кости', switch: 'Переключатель', image: 'Изображение', audio: 'Аудио' }[type] || typeLabel(type)) + ' ' + n;
+    const nm = name || this.freeName({ vector: 'Слой', group: 'Группа', bone: 'Кости', switch: 'Переключатель', image: 'Изображение', audio: 'Аудио' }[type] || typeLabel(type));
     const L = newLayer(this.doc, type, nm);
     this.insertLayer(L);
     this.commit('Новый слой');
@@ -209,8 +220,7 @@ export const app = {
       if (A.lock) { this.toast('Слой заблокирован'); return null; }
       return A;
     }
-    const n = this.idx.list.filter((l) => l.type === 'vector').length + 1;
-    const L = newLayer(this.doc, 'vector', 'Слой ' + n);
+    const L = newLayer(this.doc, 'vector', this.freeName('Слой'));
     this.insertLayer(L, { inside: !!(A && A.children) });
     this.toast('Создан векторный слой «' + L.name + '»');
     this.refresh();

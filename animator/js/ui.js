@@ -68,7 +68,7 @@ export function toast(msg, ms = 2200) {
   if (!toastWrap) { toastWrap = h('div', { class: 'toasts', 'aria-live': 'polite' }); document.body.append(toastWrap); }
   const t = h('div', { class: 'toast' }, msg);
   toastWrap.append(t);
-  while (toastWrap.children.length > 3) toastWrap.firstChild.remove();
+  while (toastWrap.children.length > 2) toastWrap.firstChild.remove();
   setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 300); }, ms);
 }
 

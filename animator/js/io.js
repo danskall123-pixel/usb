@@ -396,7 +396,7 @@ export function exportDialog(fmt) {
     const seq = ['video', 'gif', 'zip'].includes(o.fmt);
     body.append(
       selectField('Формат', o.fmt, FORMATS, (v) => { o.fmt = v; build(); }),
-      selectField('Размер', String(o.scale), { 0.25: '25%', 0.5: '50%', 1: '100%', 2: '200%' }, (v) => { o.scale = +v; info(); }),
+      selectField('Размер', o.scale.toFixed(2), { '0.25': '25%', '0.50': '50%', '1.00': '100%', '2.00': '200%' }, (v) => { o.scale = +v; info(); }),
     );
     if (seq) body.append(h('div', { class: 'insp-row' },
       numField('С кадра', o.from, { min: 0, step: 1, prec: 0, onCommit: (v) => { o.from = Math.round(v); } }),

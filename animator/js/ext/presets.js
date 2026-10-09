@@ -10,14 +10,15 @@ import { h, M, DEG, clamp } from '../util.js';
 import { setKey, evalCh } from '../anim.js';
 import { evaluate, layerWorldPoints } from '../scene.js';
 import { setOrigin } from '../tools.js';
-import { typeLabel, boneAncestor, boneDescendants } from '../model.js';
+import { layerIcon, layerLabel } from '../panels.js';
+import { boneAncestor, boneDescendants } from '../model.js';
 import { numField, rangeField, selectField, checkField, confirmDialog, dialog } from '../ui.js';
 
 registerIcon('sparkle', '<path d="M11 3l1.9 5.6L18.5 10.5l-5.6 1.9L11 18l-1.9-5.6L3.5 10.5l5.6-1.9z"/><path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/><path d="M18.5 2.5l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z"/>');
 
 // ---------- настройки панели (личное удобство, хранится в браузере) ----------
 const LS = 'anim2d.presets';
-const opt = { dur: 24, auto: true, str: 1, reps: 'auto', preview: true };
+const opt = { dur: 24, auto: true, str: 1, reps: 'auto', preview: true, more: false };
 try {
   const s = JSON.parse(localStorage.getItem(LS) || '{}');
   if (isFinite(s.dur)) opt.dur = clamp(Math.round(s.dur), 2, 600);
@@ -25,6 +26,7 @@ try {
   if (isFinite(s.str)) opt.str = clamp(+s.str, 0.25, 3);
   if (typeof s.reps === 'string') opt.reps = s.reps;
   if (typeof s.preview === 'boolean') opt.preview = s.preview;
+  if (typeof s.more === 'boolean') opt.more = s.more;
 } catch (e) { /* нет доступа */ }
 const saveOpt = () => { try { localStorage.setItem(LS, JSON.stringify(opt)); } catch (e) { /* нет доступа */ } };
 const REPS = { auto: 'Авто', 1: '1', 2: '2', 3: '3', 4: '4', 6: '6', 8: '8', end: 'До конца сцены' };
@@ -348,9 +350,21 @@ const SOFT = { pop: 'Выпры\u00ADгивание', bounce: 'Подпры\u00A
 const ADDED = { m: 'добавлен', f: 'добавлена', n: 'добавлено' };
 
 // ---------- применение ----------
-const effDur = (p) => Math.max(2, Math.round(opt.auto ? p.dur : opt.dur));
+// длительности эффектов заданы для 24 к/с; при другой частоте кадров темп в секундах сохраняется
+const effDur = (p) => Math.max(2, Math.round(opt.auto ? (p.dur * ((app.doc && app.doc.fps) || 24)) / 24 : opt.dur));
 const effReps = (p) => (opt.reps === 'auto' ? p.reps : opt.reps === 'end' ? 'end' : Math.max(1, +opt.reps || 1));
 const okLayer = (L) => !!L && L.type !== 'audio';
+// Рисунок покадрового слоя оживляем вместе со всем покадровым слоем, иначе двигался бы один рисунок
+function targetLayer(L = app.active) {
+  const P = L && app.idx ? app.idx.parent.get(L.id) : null;
+  return P && P.type === 'switch' && P.fbf ? P : L;
+}
+const kindLabel = (L) => (L.type === 'switch' && L.fbf ? 'покадровый' : String(layerLabel(L) || '').toLowerCase());
+// Слой или один из его родителей скрыт «глазом»
+function hiddenChain(L) {
+  for (let X = L; X; X = app.idx.parent.get(X.id)) if (X.vis === false) return true;
+  return false;
+}
 
 function startFrame() {
   if (startOverride != null) return startOverride;
@@ -358,17 +372,33 @@ function startFrame() {
   return f > 0 ? f : Math.max(1, app.doc ? app.doc.start : 1);
 }
 
-// Удалить ключи в диапазоне [a, b] (кадр 0 не трогаем) и «удержания», которые вели к удалённому появлению
+// Удалить ключи в диапазоне [a, b] (кадр 0 не трогаем) и «удержания», которые вели к удалённому появлению.
+// Возвращает число удалённых ключей, поставленных не «Оживить» (их стоит упомянуть в сообщении).
 function clearRange(c, a, b) {
   const k = c.k;
+  let own = 0;
   c.k = k.filter((x, i) => {
     if (x.f === 0) return true;
-    if (x.f >= a && x.f <= b) return false;
+    if (x.f >= a && x.f <= b) { if (!x.hid && !x.pz) own++; return false; }
     if (x.hid === 2) { const nx = k[i + 1]; if (nx && nx.f >= a && nx.f <= b) return false; }
     return true;
   });
+  return own;
 }
 const homeValue = (c, f) => evalCh({ k: c.k.filter((k) => k.f === 0 || !k.hid) }, f);
+// Кадр начала a — посреди прежнего служебного перехода (например, «Появления»), который кончается в [a, b]?
+// Тогда «место» слоя — ключ, которым переход заканчивается (его мог сдвинуть пользователь), а не середина пути.
+// Ключ ровно на кадре a (например, слой расставили на первом кадре) — это и есть место слоя.
+// Возвращает { v, own } (own — ключ поставил пользователь, его значение сохраняется, а не «заменяется»).
+function landing(c, a, b) {
+  let prev = null;
+  for (const k of c.k) if (k.f <= a && (k.f === 0 || !k.hid)) prev = k;
+  if (!prev) return undefined;
+  if (prev.f === a) return prev.f > 0 ? { v: prev.v, own: !prev.pz } : undefined;
+  const next = c.k.find((k) => k.f > a && !k.hid);
+  if (!next || next.f > b || !c.k.some((k) => k.hid && k.f > prev.f && k.f < next.f)) return undefined;
+  return { v: next.v, own: false };
+}
 
 // Геометрия слоя на кадре f без «скрытых» ключей: рамка содержимого (локальная и в кадре камеры)
 // и перевод смещения из координат кадра в пространство родителя слоя.
@@ -395,14 +425,33 @@ function layerGeo(L, f) {
   }
 }
 
-// Точка вращения по умолчанию [0,0] → в центр (или к краю) содержимого, слой не сдвигается
-function autoPivot(L, where, geo) {
+// Точка вращения по умолчанию [0,0] (или поставленная раньше самим «Оживить») → в центр (или к краю)
+// содержимого, слой не сдвигается. Точку, заданную пользователем, не трогаем.
+// keep(f) — кадры, где ключи положения пишет сам эффект (компенсирующие ключи там не нужны);
+// mineKey(c, f) — ключ канала, который эффект сейчас перезапишет (не считается чужой анимацией).
+function autoPivot(L, where, geo, keep, mineKey) {
   const o = L.origin;
-  if (!geo.lb || Math.abs(o[0]) > 1e-6 || Math.abs(o[1]) > 1e-6) return false;
+  if (!geo.lb) return false;
+  const near = (u, v) => Math.abs(u[0] - v[0]) < 1e-6 && Math.abs(u[1] - v[1]) < 1e-6;
+  const fresh = near(o, [0, 0]);
+  const mine = !fresh && Array.isArray(L.pzPiv) && near(o, L.pzPiv);
+  if (!fresh && !mine) return false;
   const { x0, y0, x1, y1 } = geo.lb, cx = (x0 + x1) / 2;
   const pt = where === 'top' ? [cx, y0] : where === 'bottom' ? [cx, y1] : [cx, (y0 + y1) / 2];
-  if (Math.hypot(pt[0], pt[1]) < 0.5) return false;
+  if (Math.hypot(pt[0] - o[0], pt[1] - o[1]) < 0.5) return false;
+  // Остальная анимация поворота и масштаба зависит от точки вращения: эффекты «Оживить» не переделываем,
+  // а ручные ключи сохраняем на месте ключами положения на тех же кадрах (setOrigin их компенсирует)
+  const other = new Set();
+  for (const c of [L.rot, L.scl]) for (const k of c.k) if (k.f > 0 && !mineKey(c, k.f)) other.add(k.f);
+  if (other.size && mine) return false;
+  for (const f of other) {
+    if (keep(f) || L.pos.k.some((k) => k.f === f)) continue;
+    let prev = L.pos.k[0];
+    for (const k of L.pos.k) { if (k.f < f) prev = k; else break; }
+    setKey(L.pos, f, evalCh(L.pos, f), prev.i);
+  }
   setOrigin(L, pt);
+  L.pzPiv = [pt[0], pt[1]];
   return true;
 }
 
@@ -422,7 +471,7 @@ function writeTrack(tr, a, cyc, base) {
   for (let [o, v, ip, hid] of tr.keys) {
     const k = setKey(c, a + o, v, ip);
     if (!hid && cyc && !same(v, base(c))) hid = 3;
-    if (hid) k.hid = hid; else delete k.hid;
+    if (hid) { k.hid = hid; delete k.pz; } else { delete k.hid; k.pz = 1; }
     last = Math.max(last, a + o);
   }
   return last;
@@ -434,7 +483,7 @@ function applyPreset(p, { preview: doPreview = opt.preview } = {}) {
   const doc = app.doc;
   if (!doc) return false;
   const kind = p.cat === 'cam' ? 'cam' : p.cat === 'bone' ? 'bone' : 'layer';
-  const L = app.active;
+  const L = targetLayer();
   let bones = null;
   if (kind !== 'cam') {
     if (!okLayer(L)) { app.toast(L ? 'У звукового слоя нет движения — выберите другой слой' : 'Сначала выберите слой в панели «Слои»', 3000); return false; }
@@ -467,11 +516,18 @@ function applyPreset(p, { preview: doPreview = opt.preview } = {}) {
   const b = a + T + tail;
   const target = kind === 'cam' ? doc.cam : L;
   const chans = kind === 'bone' ? bones.flatMap((bn) => p.ch.map((k) => bn[k])) : p.ch.map((k) => target[k]);
-  for (const c of chans) clearRange(c, a, b);
+  const land = new Map();
+  for (const c of chans) { const v = landing(c, a, b); if (v !== undefined) land.set(c, v); }
+  let replaced = 0;
+  for (const c of chans) replaced += clearRange(c, a, b);
+  // место слоя на кадре a — временным ключом (эффект перезапишет его своим первым ключом)
+  for (const [c, v] of land) { setKey(c, a, v.v, 'smooth'); if (v.own) replaced--; }
+  replaced = Math.max(0, replaced);
   let geo = null;
   if (kind === 'layer') {
     geo = layerGeo(L, a);
-    if (p.pivot) autoPivot(L, p.pivot, geo);
+    const writesPos = p.ch.includes('pos');
+    if (p.pivot) autoPivot(L, p.pivot, geo, (f) => writesPos && f >= a && f <= b, (c, f) => chans.includes(c) && f >= a && f <= b);
   }
   const cache = new Map();
   const ctx = {
@@ -501,7 +557,9 @@ function applyPreset(p, { preview: doPreview = opt.preview } = {}) {
   const lastPlayed = untilEnd ? Math.min(last, doc.end) : last;
   let msg = `«${p.name}» ${ADDED[p.g] || 'добавлено'}: кадры ${a}–${lastPlayed}`;
   if (kind === 'bone' && bones.length > 1) msg += ` (костей: ${bones.length})`;
+  if (replaced) msg += `. Заменены прежние ключи (${replaced}) — Ctrl+Z вернёт их`;
   if (lastPlayed > doc.end) { doc.end = lastPlayed; msg += `. Сцена удлинена до кадра ${lastPlayed}`; }
+  if (kind !== 'cam' && hiddenChain(L)) msg += '. Слой скрыт — включите «глаз» в панели «Слои», чтобы его увидеть';
   app.commit('Оживить: ' + p.name);
   app.toast(msg, msg.length > 50 ? 3500 : 2600);
   lastApplied = { p, next: lastPlayed + 1 };
@@ -539,10 +597,20 @@ function preview(a, b, orig = null) {
   };
   pv.raf = requestAnimationFrame(tick);
 }
+// Клик или клавиша во время показа — сначала вернуться на исходный кадр, чтобы правка не попала на кадр показа
+function interruptPreview(e) {
+  if (!pv) return;
+  if (e.type === 'keydown' && (e.repeat || ['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key))) return;
+  if (e.type === 'pointerdown' && e.target && e.target.closest && e.target.closest('.pz-card')) return; // новая карточка сама перезапустит показ
+  stopPreview(true);
+  refreshStart();
+}
+document.addEventListener('pointerdown', interruptPreview, true);
+document.addEventListener('keydown', interruptPreview, true);
 
 // ---------- убрать анимацию ----------
 function clearLayerAnim() {
-  const L = app.active;
+  const L = targetLayer();
   if (!okLayer(L)) { app.toast('Сначала выберите слой в панели «Слои»'); return; }
   if (L.lock) { app.toast(`Слой «${L.name}» заблокирован`); return; }
   const chans = [L.pos, L.rot, L.scl, L.op];
@@ -630,12 +698,23 @@ function mount(el) {
     onCommit: (v) => { opt.dur = Math.round(v); opt.auto = false; autoC.querySelector('input').checked = false; saveOpt(); updCards(); },
   });
   const autoC = checkField('авто', opt.auto, (v) => { opt.auto = v; saveOpt(); updCards(); }, 'У каждого эффекта своя подходящая длительность (видна на карточке)');
-  const strF = rangeField('Сила', opt.str, { min: 0.25, max: 3, step: 0.05, prec: 2, onLive: (v) => { opt.str = v; }, onCommit: (v) => { opt.str = v; saveOpt(); } });
-  strF.title = 'Размах движения: 1 — обычный, меньше — спокойнее, больше — сильнее';
-  strF.querySelector('.rng-l').addEventListener('dblclick', () => { opt.str = 1; strF.set(1); saveOpt(); });
+  const strF = rangeField('Сила', opt.str, { min: 0.25, max: 3, step: 0.05, prec: 2, onLive: (v) => { opt.str = v; }, onCommit: (v) => { opt.str = v; saveOpt(); updMore(); } });
+  strF.title = 'Размах движения: 1 — обычный, меньше — спокойнее, больше — сильнее. Двойной клик по слову «Сила» — вернуть 1';
+  strF.querySelector('.rng-l').addEventListener('dblclick', () => { opt.str = 1; strF.set(1); saveOpt(); updMore(); });
   const repsF = selectField('Повторы', opt.reps, REPS, (v) => { opt.reps = v; saveOpt(); updCards(); });
   repsF.title = 'Сколько раз повторить цикл. «Авто» — до конца сцены для плавных циклов, один раз для тряски и кивка';
-  const pvC = checkField('Сразу показать результат', opt.preview, (v) => { opt.preview = v; saveOpt(); }, 'После добавления один раз проиграть анимацию');
+  const pvC = checkField('Сразу показать результат', opt.preview, (v) => { opt.preview = v; saveOpt(); updMore(); }, 'После добавления один раз проиграть анимацию');
+  // второстепенные настройки свёрнуты, чтобы карточки эффектов были видны сразу
+  const setMore = (on) => { opt.more = on; saveOpt(); updMore(); };
+  const moreDot = h('i', { class: 'pz-dot', hidden: true });
+  const moreBtn = h('button', { class: 'btn sm pz-more-btn', onclick: () => setMore(!opt.more) }, icon('settings', 14), h('span', null, 'Настройки'), moreDot, h('span', { class: 'pz-caret' }, '▾'));
+  const moreSum = h('button', { class: 'pz-link pz-sum', hidden: true, onclick: () => setMore(true) });
+  const more = h('div', { class: 'pz-more', hidden: true },
+    h('div', { class: 'pz-row' }, repsF),
+    h('div', { class: 'pz-row' }, durF, autoC),
+    strF,
+    pvC,
+  );
   const nextBtn = h('button', { class: 'pz-next', hidden: true, onclick: () => { if (lastApplied) { startOverride = lastApplied.next; refreshStart(); } } });
 
   const cards = [];
@@ -654,23 +733,43 @@ function mount(el) {
     cats[cat.id] = { sec, note };
   }
   const boneHint = h('div', { class: 'pz-bonehint', hidden: true });
+  // эффекты конкретного типа слоя (registerLayerType(..., { effects: [{ id, name, hint, apply(L, { start }) }] }))
+  const typeSec = h('section', { class: 'pz-cat pz-typefx', hidden: true });
 
   el.classList.add('pz');
   el.append(
     h('div', { class: 'pz-tgt' }, tgtIc, tgtTxt, clearBtn),
     h('div', { class: 'pz-ctl' },
-      h('div', { class: 'pz-row' }, h('div', { class: 'pz-col' }, startF, startNote), repsF),
-      h('div', { class: 'pz-row' }, durF, autoC),
-      strF,
-      pvC,
+      h('div', { class: 'pz-row' }, h('div', { class: 'pz-col' }, startF, startNote), moreBtn),
+      moreSum,
+      more,
     ),
     nextBtn,
+    typeSec,
     cats.in.sec, cats.out.sec, cats.loop.sec, cats.cam.sec, cats.bone.sec, boneHint,
     h('div', { class: 'insp-note pz-tip' }, 'Клик по карточке сразу добавляет ключи на таймлайн. Эффекты можно сочетать: например, «Вылет слева» и «Проявление» с одного кадра. Ctrl+Z — отменить.'),
     h('div', { class: 'pz-foot' }, clearBtn2),
   );
-  ui = { startF, startNote, durF, autoC, strF, repsF, pvC, nextBtn, tgtIc, tgtTxt, clearBtn, clearBtn2, cards, cats, boneHint };
+  ui = { startF, startNote, durF, autoC, strF, repsF, pvC, nextBtn, tgtIc, tgtTxt, clearBtn, clearBtn2, cards, cats, boneHint, more, moreBtn, moreDot, moreSum, typeSec };
+  updMore();
   refresh();
+}
+
+// Кнопка «Настройки»: точка и строка-сводка, если что-то отличается от обычного
+function updMore() {
+  if (!ui) return;
+  const ch = [];
+  if (Math.abs(opt.str - 1) > 1e-9) ch.push('сила ' + String(+opt.str.toFixed(2)).replace('.', ','));
+  if (!opt.auto) ch.push(`длительность ${opt.dur} к`);
+  if (opt.reps !== 'auto') ch.push('повторы: ' + REPS[opt.reps].toLowerCase());
+  if (!opt.preview) ch.push('без показа результата');
+  ui.more.hidden = !opt.more;
+  ui.moreBtn.classList.toggle('on', opt.more);
+  ui.moreBtn.setAttribute('aria-expanded', String(opt.more));
+  ui.moreBtn.title = (opt.more ? 'Скрыть' : 'Показать') + ' настройки: повторы, длительность, сила, показ результата' + (ch.length ? '\nИзменено: ' + ch.join(', ') : '');
+  ui.moreDot.hidden = !ch.length;
+  ui.moreSum.hidden = opt.more || !ch.length;
+  ui.moreSum.textContent = ch.length ? 'Изменено: ' + ch.join(' · ') : '';
 }
 
 function refreshStart() {
@@ -696,7 +795,8 @@ function updNext() {
 
 function updCards() {
   if (!ui) return;
-  const fps = (app.doc && app.doc.fps) || 24, L = app.active;
+  updMore();
+  const fps = (app.doc && app.doc.fps) || 24, L = targetLayer();
   ui.durF.set(opt.dur);
   ui.durF.classList.toggle('pz-dim', opt.auto);
   for (const { p, btn, badge } of ui.cards) {
@@ -713,14 +813,14 @@ function updCards() {
 
 function refresh() {
   if (!ui || !app.doc) return;
-  const L = app.active;
+  const L = targetLayer();
   ui.tgtIc.textContent = '';
   if (okLayer(L)) {
-    const def = registry.layerTypes[L.type];
-    ui.tgtIc.append(icon({ vector: 'vector', group: 'group', bone: 'bone', switch: 'switch', image: 'image' }[L.type] || (def && def.icon) || 'vector', 15));
+    ui.tgtIc.append(icon(layerIcon(L) || 'vector', 15));
     ui.tgtTxt.textContent = '';
-    ui.tgtTxt.append('Слой: ', h('b', null, L.name), h('span', { class: 'muted' }, ` · ${typeLabel(L.type).toLowerCase()}${L.lock ? ' · заблокирован' : ''}`));
-    ui.tgtTxt.title = `Эффекты слоя применяются к «${L.name}»`;
+    const st = (L.lock ? ' · заблокирован' : '') + (hiddenChain(L) ? ' · скрыт' : '');
+    ui.tgtTxt.append('Слой: ', h('b', null, L.name), h('span', { class: 'muted' }, ` · ${kindLabel(L)}${st}`));
+    ui.tgtTxt.title = `Эффекты слоя применяются к «${L.name}»` + (L !== app.active ? ' — целиком, со всеми рисунками' : '');
   } else {
     ui.tgtIc.append(icon('help', 15));
     ui.tgtTxt.textContent = L ? 'Звуковой слой нельзя оживить — выберите другой' : 'Слой не выбран — выберите его в панели «Слои»';
@@ -731,6 +831,9 @@ function refresh() {
   const isBone = !!L && L.type === 'bone';
   const B = L && !isBone && app.idx ? boneAncestor(app.idx, L) : null;
   ui.cats.bone.sec.hidden = !isBone;
+  // на слое костей эффекты костей — самые нужные: показываем их первыми
+  const bsec = ui.cats.bone.sec, anchor = isBone ? ui.cats.in.sec : ui.cats.cam.sec.nextSibling;
+  if (bsec.nextSibling !== anchor && bsec !== anchor) anchor.parentNode.insertBefore(bsec, anchor);
   if (isBone) {
     const n = L.bones.filter((b) => app.sel.bones.has(b.id)).length;
     ui.cats.bone.note.textContent = !L.bones.length ? 'В этом слое пока нет костей.'
@@ -743,8 +846,31 @@ function refresh() {
     ui.boneHint.append(h('span', null, 'Хотите оживить кости? Эффекты костей — на слое «', h('b', null, B.name), '».'),
       h('button', { class: 'btn sm', onclick: () => app.setActive(B.id) }, icon('bone', 14), 'Выбрать слой костей'));
   }
+  updTypeFx(L);
   refreshStart();
   updCards();
+}
+
+function updTypeFx(L) {
+  const sec = ui.typeSec, xt = L && registry.layerTypes[L.type];
+  const fx = xt && Array.isArray(xt.effects) ? xt.effects : [];
+  sec.hidden = !fx.length || !!(L && L.lock);
+  const key = fx.length ? L.type : '';
+  if (sec.dataset.k === key) return;
+  sec.dataset.k = key;
+  sec.textContent = '';
+  if (!fx.length) return;
+  sec.append(
+    h('div', { class: 'pz-cat-h' }, h('span', { class: 'pz-cat-t' }, 'Особые эффекты: ' + (xt.label || L.type))),
+    h('div', { class: 'pz-grid' }, fx.map((e) => {
+      const btn = h('button', { class: 'pz-card', 'data-typefx': e.id, title: e.hint || e.name, onclick: () => {
+        const T = targetLayer();
+        if (!T || T.type !== key) return;
+        try { if (e.apply(T, { start: startFrame() }) !== false) flash(btn); } catch (er) { console.error(er); app.toast('Не удалось применить эффект'); }
+      } }, h('span', { class: 'pz-stage', 'aria-hidden': 'true' }, h('i', { class: 'pz-a', style: { animation: 'pz-fadein 1.8s infinite' } })), h('span', { class: 'pz-name' }, e.name), h('span', { class: 'pz-meta' }, e.meta || ''));
+      return btn;
+    })),
+  );
 }
 
 registerSideTab({ id: 'presets', title: 'Оживить', icon: 'sparkle', order: -10, mount, refresh });
@@ -766,19 +892,19 @@ const QUICK = [['Появление', ['fadein', 'inleft', 'inbottom', 'pop']], 
 registerMenu('Анимация', () => [
   { label: 'Оживить: готовые анимации…', icon: 'sparkle', action: openTab },
   {
-    label: 'Оживить слой', icon: 'sparkle', disabled: () => !okLayer(app.active),
+    label: 'Оживить слой', icon: 'sparkle', disabled: () => !okLayer(targetLayer()),
     sub: QUICK.flatMap(([t, ids]) => [{ title: t }, ...ids.map((id) => ({ label: byId[id].name, action: () => applyPreset(byId[id]) }))]),
   },
-  { label: 'Убрать анимацию слоя…', disabled: () => !okLayer(app.active), action: clearLayerAnim },
+  { label: 'Убрать анимацию слоя…', disabled: () => !okLayer(targetLayer()), action: clearLayerAnim },
 ]);
 
 registerTimelineMenu(({ row, frame }) => {
   const f = Math.max(1, frame);
   if (row && row.kind === 'cam') return [{ label: `Оживить камеру с кадра ${f}…`, icon: 'sparkle', action: () => { openTab(); startOverride = f; refreshStart(); } }];
-  const L = row && row.layer;
-  if (!okLayer(L)) return [];
+  const L = row && row.layer, T = targetLayer(L);
+  if (!okLayer(T)) return [];
   return [{
-    label: `Оживить «${L.name}» с кадра ${f}…`, icon: 'sparkle',
+    label: `Оживить «${T.name}» с кадра ${f}…`, icon: 'sparkle',
     action: () => { if (app.activeId !== L.id) app.setActive(L.id); openTab(); startOverride = f; refreshStart(); },
   }];
 });
@@ -791,7 +917,6 @@ registerInspector({
 
 // ---------- стили ----------
 addStyle(`
-#side-body > #inspector[hidden] { display: none; } /* ядро: #inspector { display: block } перебивает [hidden] */
 .pz-mb { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; border-radius: var(--radius); border: 0; font-size: 12px; font-weight: 600; color: #22140f; background: linear-gradient(135deg, #ffc46b, #ff7a59); white-space: nowrap; box-shadow: 0 1px 6px rgba(255,122,89,.25); }
 .pz-mb:hover { filter: brightness(1.08); }
 .pz { padding: 8px 10px 24px; overflow-x: hidden; }
@@ -814,6 +939,14 @@ addStyle(`
 .pz-col > .num { width: 100%; }
 .pz-hint { color: var(--text3); font-size: 11px; margin-top: 2px; min-height: 14px; }
 .pz-dim { opacity: .5; }
+.pz-more-btn { flex: none; height: 26px; gap: 5px; padding: 0 8px; color: var(--text2); }
+.pz-more-btn:hover, .pz-more-btn.on { color: var(--text); }
+.pz-more-btn .pz-caret { font-size: 10px; color: var(--text3); transition: transform .15s; }
+.pz-more-btn.on .pz-caret { transform: rotate(180deg); }
+.pz-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--warm); }
+.pz-dot[hidden], .pz-more[hidden], .pz-link.pz-sum[hidden] { display: none; }
+.pz-more { margin: 2px 0 4px; padding: 2px 8px 6px; border-radius: 6px; background: var(--bg2); }
+.pz-link.pz-sum { display: block; margin: -2px 0 4px; color: var(--warm); text-align: left; }
 .pz-link { border: 0; background: none; padding: 0; color: var(--accent); font-size: 11px; cursor: pointer; }
 .pz-link:hover { text-decoration: underline; }
 .pz-next { display: flex; align-items: center; gap: 6px; width: 100%; margin: 4px 0 2px; padding: 6px 8px; border-radius: 6px; border: 1px dashed rgba(76,157,255,.45); background: var(--accent-bg); color: var(--text); font-size: 12px; text-align: left; }

@@ -9,7 +9,7 @@ import { registry } from './ext.js';
 
 let NAME_W = 210;
 const RULER = 24, ROW = 22;
-const CH_LABELS = { fill: 'Цвет', stroke: 'Обводка', width: 'Толщина', reveal: 'Показано букв', amt: 'Количество', color: 'Цвет', size: 'Размер' };
+const CH_LABELS = { fill: 'Цвет', stroke: 'Обводка', width: 'Толщина', reveal: 'Показано букв', amt: 'Показано', color: 'Цвет', size: 'Размер' };
 const TYPE_COL = { vector: '#ffb054', group: '#9aa3ad', bone: '#4c9dff', switch: '#d38bff', image: '#57c9a6', audio: '#ff6fd8' };
 
 export function initTimeline(root) {
