@@ -1,10 +1,10 @@
 // Траектория движения (как в Moho/AE): пунктир пути активного слоя, выделенных костей или точек
 // по кадрам сцены. Ромбики — ключи положения (их можно тянуть), точки — кадры (клик — перейти к кадру).
 import { app } from '../app.js';
-import { M, RAD, DEG, h, normAngle } from '../util.js';
+import { M, RAD, DEG, h, normAngle, pointInPoly, distToSeg } from '../util.js';
 import { evalCh, setKey, keyIndex } from '../anim.js';
 import { evaluate } from '../scene.js';
-import { tools, snapXY, layerBox } from '../tools.js';
+import { tools, snapXY, layerBox, hitBone, hitPoint, hitShape } from '../tools.js';
 import { icon, registerIcon } from '../icons.js';
 import { registerOverlay, registerViewportHandler, registerOptbarButton, registerMenu } from '../ext.js';
 
@@ -14,6 +14,7 @@ const MAX_FRAMES = 600;
 const MAX_BONES = 6;
 const COL = '#ff5fd2';
 const HIT_KEY = 7, HIT_DOT = 5;
+const CUR_ZONE = 10; // вокруг положения на текущем кадре клик достаётся инструменту (там сам объект)
 
 // ---------- настройка: показ траектории ----------
 const LS = 'anim2d.motionPath';
@@ -38,7 +39,7 @@ const parentOf = (X) => app.idx.parent.get(X.id) || null;
 
 function targets() {
   const L = app.active;
-  if (!L || !app.doc || !app.idx) return [];
+  if (!L || !app.doc || !app.idx || L.vis === false) return [];
   if (L.type === 'bone' && L.bones && app.sel.bones.size) {
     const bones = L.bones.filter((b) => app.sel.bones.has(b.id)).slice(0, MAX_BONES);
     if (bones.length) return bones.map((b) => ({ kind: 'bone', L, b, key: 'b' + b.id }));
@@ -128,23 +129,36 @@ function signature(tg, f0, f1) {
 }
 
 let cache = new Map();
-function trajectory(tg) {
+// Траектории целей: { frames, pts, keys } для каждой. Несколько костей одного слоя считаются
+// за один проход по кадрам (сцена вычисляется один раз на кадр, а не на каждую кость).
+function trajectories(tgs) {
   const [f0, f1] = frameRange();
-  const sig = signature(tg, f0, f1);
-  const c = cache.get(tg.key);
-  if (c && c.sig === sig) return c.data;
-  const doc = miniDoc(tg);
-  const frames = [], pts = [];
-  for (let f = f0; f <= f1; f++) {
-    const p = worldPos(tg, evaluate(doc, f));
-    if (p) { frames.push(f); pts.push(p); }
+  const res = new Map();
+  const groups = new Map();
+  for (const tg of tgs) {
+    const sig = signature(tg, f0, f1);
+    const c = cache.get(tg.key);
+    if (c && c.sig === sig) { res.set(tg, c.data); continue; }
+    const g = tg.kind === 'bone' ? 'B' + tg.L.id : tg.key;
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push({ tg, sig, frames: [], pts: [] });
   }
-  const keys = new Set();
-  for (const ch of keyChannels(tg)) for (const k of ch.k) if (k.f >= f0 && k.f <= f1) keys.add(k.f);
-  const data = { frames, pts, keys };
-  if (cache.size > 24) cache = new Map();
-  cache.set(tg.key, { sig, data });
-  return data;
+  for (const list of groups.values()) {
+    const doc = miniDoc(list[0].tg);
+    for (let f = f0; f <= f1; f++) {
+      const S = evaluate(doc, f);
+      for (const it of list) { const p = worldPos(it.tg, S); if (p) { it.frames.push(f); it.pts.push(p); } }
+    }
+    for (const it of list) {
+      const keys = new Set();
+      for (const ch of keyChannels(it.tg)) for (const k of ch.k) if (k.f >= f0 && k.f <= f1) keys.add(k.f);
+      const data = { frames: it.frames, pts: it.pts, keys };
+      if (cache.size > 24) cache = new Map();
+      cache.set(it.tg.key, { sig: it.sig, data });
+      res.set(it.tg, data);
+    }
+  }
+  return res;
 }
 
 // ---------- отрисовка ----------
@@ -179,6 +193,7 @@ function hoverText(hv) {
   const base = 'Кадр ' + hv.f;
   if (!hv.key) return base + ' — клик: перейти';
   if (hv.tg.L.lock) return base + ' · ключ (слой заблокирован)';
+  if (hv.tg.kind === 'bone' && hv.f === 0) return base + ' (поза покоя) — клик: перейти';
   if (hv.tg.kind === 'bone') return base + ' · ключ — тяните, чтобы ' + (boneMode(hv.tg, hv.f, false) === 'move' ? 'сдвинуть' : 'повернуть') + ' кость';
   return base + ' · ключ — тяните, чтобы поправить путь';
 }
@@ -262,8 +277,9 @@ registerOverlay((ctx) => {
   const tgs = targets();
   if (!tgs.length) return;
   const m = app.docToScreenM();
+  const T = trajectories(tgs);
   for (const tg of tgs) {
-    const d = drawPath(ctx, m, tg, trajectory(tg));
+    const d = drawPath(ctx, m, tg, T.get(tg));
     if (d) drawn.push(d);
   }
   if (hover) {
@@ -289,9 +305,32 @@ function interactive() {
   return true;
 }
 
+// Содержимое активного слоя под курсором: клик по нему — работа инструмента, а не переход к кадру
+function overObject(sx, sy) {
+  const L = app.active, t = tools[app.tool];
+  if (!L || !t) return false;
+  try {
+    if (t.group === 'bone') { const B = app.boneLayerFor(); return !!(B && hitBone(B, sx, sy, 11)); }
+    if (L.type === 'vector' && (t.group === 'draw' || t.group === 'bind' || t.group === 'fill')) return !!(hitPoint(L, sx, sy) || hitShape(L, sx, sy));
+    const bb = layerBox(L);
+    if (!bb) return false;
+    const q = [[bb.x0, bb.y0], [bb.x1, bb.y0], [bb.x1, bb.y1], [bb.x0, bb.y1]].map(([x, y]) => bb.toS(x, y));
+    if (pointInPoly(sx, sy, q)) return true;
+    // кромка рамки и зона поворота у углов (как у «Трансформировать слой»)
+    for (let i = 0; i < 4; i++) {
+      const a = q[i], b = q[(i + 1) % 4];
+      if (distToSeg(sx, sy, a[0], a[1], b[0], b[1]).d <= 8 || Math.hypot(sx - a[0], sy - a[1]) <= 28) return true;
+    }
+  } catch (e) { /* нет данных для проверки */ }
+  return false;
+}
+
 function hitTest(sx, sy) {
   let best = null, bd = Infinity;
   const cur = app.frame;
+  // положение цели на текущем кадре: если курсор ближе к нему, клик достаётся инструменту
+  let dc = Infinity;
+  for (const d of drawn) { const i = d.frames.indexOf(cur); if (i >= 0) dc = Math.min(dc, Math.hypot(d.sp[i][0] - sx, d.sp[i][1] - sy)); }
   // сначала ключи, потом точки кадров
   for (const pass of [true, false]) {
     const r = pass ? HIT_KEY : HIT_DOT;
@@ -306,7 +345,12 @@ function hitTest(sx, sy) {
         if (better) { bd = Math.min(bd, dist); best = { tg: d.tg, f, key: pass }; }
       }
     }
-    if (best) return best;
+    if (best) {
+      if (dc <= CUR_ZONE && dc <= bd + 1) return null;
+      // точка кадра поверх самого объекта — пусть инструмент берёт объект (ромбики ключей важнее)
+      if (!pass && overObject(sx, sy)) return null;
+      return best;
+    }
   }
   return null;
 }
@@ -394,13 +438,14 @@ registerViewportHandler({
     const hit = hitTest(e.sx, e.sy);
     setHover(hit);
     if (!hit) return null;
-    return hit.key && !hit.tg.L.lock ? 'move' : 'pointer';
+    return hit.key && !hit.tg.L.lock && !(hit.tg.kind === 'bone' && hit.f === 0) ? 'move' : 'pointer';
   },
   down(e) {
     if (!interactive()) return false;
     const hit = hitTest(e.sx, e.sy);
     if (!hit) return false;
-    if (!hit.key || hit.tg.L.lock) {
+    // кадр 0 костей — поза покоя: её правят «Трансформировать кость», а не анимация
+    if (!hit.key || hit.tg.L.lock || (hit.tg.kind === 'bone' && hit.f === 0)) {
       drag = { click: true, f: hit.f, start: e };
       return true;
     }
@@ -436,22 +481,9 @@ function toggleButton() {
 }
 registerOptbarButton(toggleButton);
 
-// Если ядро ещё не выводит кнопки модулей в панели параметров — добавляем свою сами
-function ensureOptbarButton() {
-  const bar = document.getElementById('optbar');
-  if (!bar || bar.querySelector('.mp-tog')) return;
-  const right = bar.querySelector('.ob-right');
-  if (right) right.prepend(toggleButton());
-}
 // курсор ушёл с холста — убрать подсказку
 const vpCanvas = document.querySelector('#viewport canvas');
 if (vpCanvas) vpCanvas.addEventListener('pointerleave', () => { if (hover && !drag) setHover(null); });
-
-const optbarEl = document.getElementById('optbar');
-if (optbarEl && typeof MutationObserver !== 'undefined') {
-  new MutationObserver(() => ensureOptbarButton()).observe(optbarEl, { childList: true });
-  ensureOptbarButton();
-}
 
 registerMenu('Вид', () => [
   { label: 'Траектория движения', icon: 'motionpath', checked: enabled(), action: toggle },

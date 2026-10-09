@@ -52,6 +52,15 @@ function tidy(c) {
 }
 // Обратная интерполяция: ускорение ↔ замедление
 const flipI = (i) => (i === 'in' ? 'out' : i === 'out' ? 'in' : i);
+// Копия ключа со всеми служебными полями (например, пометки «Оживить»: hid, pz)
+const copyKey = (k, f = k.f) => ({ ...k, f, v: cp(k.v) });
+// Поставить на кадр f ключ-копию k (служебные поля — как у k)
+function putKey(c, f, k) {
+  const nk = setKey(c, f, k.v, k.i);
+  for (const x of Object.keys(nk)) if (x !== 'f' && x !== 'v' && x !== 'i') delete nk[x];
+  for (const x of Object.keys(k)) if (x !== 'f' && x !== 'v' && x !== 'i') nk[x] = k[x];
+  return nk;
+}
 
 // Что обрабатываем: выделенные ключи или все ключи активного слоя
 // → { mode: 'sel'|'layer', W: Map(канал → Set(кадров)), rowIds?, L?, what }
@@ -62,17 +71,36 @@ export function workSet() {
     const rowIds = new Set(), zero = [];
     for (const s of ops.selectedIds()) { const rid = s.slice(0, s.lastIndexOf('|')); rowIds.add(rid); if (s.endsWith('|0')) zero.push(s); }
     const n = ops.selectedIds().size;
-    return { mode: 'sel', W: sel, rowIds, zero, what: 'выделенные ключи (' + n + ')' };
+    // все каналы строк с выделенными ключами (их последующие ключи сдвигаются вместе с фрагментом)
+    const rowChans = new Set();
+    for (const r of ops.rows()) if (rowIds.has(r.id)) for (const c of r.chans) rowChans.add(c);
+    return { mode: 'sel', W: sel, rowIds, zero, rowChans, what: 'выделенные ключи (' + n + ')' };
   }
-  const L = app.active;
+  let L = app.active;
   if (!L) return null;
-  const W = new Map();
+  // рисунок покадрового слоя: берём весь покадровый слой — смену рисунков задаёт он
+  for (let P = app.idx.parent.get(L.id); P; P = app.idx.parent.get(P.id)) if (P.type === 'switch' && P.fbf) { L = P; break; }
+  const W = new Map(), rowChans = new Set();
   for (const X of [L, ...descendants(L)]) {
-    for (const c of layerOwnChannels(X)) if (c.k.length > 1) W.set(c, new Set(c.k.map((k) => k.f)));
+    for (const c of layerOwnChannels(X)) { rowChans.add(c); if (c.k.length > 1) W.set(c, new Set(c.k.map((k) => k.f))); }
   }
   const kids = L.children && L.children.length ? ' и вложенных' : '';
-  return { mode: 'layer', W, L, what: `все ключи слоя «${L.name}»${kids}` };
+  return { mode: 'layer', W, L, rowChans, what: `все ключи слоя «${L.name}»${kids}` };
 }
+
+// Каналы тех же строк без выделенных ключей, но меняющиеся внутри [a, b] (например, кость между
+// своими ключами): повтор захватывает и их, иначе копии выглядели бы иначе, чем исходник
+function companions(ws, a, b) {
+  const W = new Map(ws.W);
+  for (const c of ws.rowChans || []) {
+    if (W.has(c) || c.k.length < 2) continue;
+    const v0 = evalCh(c, a);
+    for (let f = a + 1; f <= b; f++) if (!eqV(evalCh(c, f), v0, 1e-6)) { W.set(c, new Set()); break; }
+  }
+  return W;
+}
+// Все каналы, ключи которых после фрагмента сдвигаются при «Сдвинуть следующие ключи»
+const rippleChans = (ws, W) => new Set([...W.keys(), ...(ws.rowChans || [])]);
 
 // Для повтора и растяжения: ключ кадра 0 (поза покоя) входит во фрагмент, только если движение
 // в диапазоне воспроизведения начинается от него (у канала нет ключа на первом кадре сцены)
@@ -149,21 +177,40 @@ function noKeys(ws) {
 }
 
 // ---------- повтор ----------
-// План повтора: фрагмент [a, b]; если последний ключ совпадает с первым (цикл замкнут) — период = длине,
+// План повтора: фрагмент [a, b]; если поза в конце совпадает с позой в начале (цикл замкнут) — период = длине,
 // иначе между повторами добавляется плавный возврат длиной в средний интервал между ключами
 export function repeatPlan(W) {
   const frames = framesOf(W);
   if (frames.length < 2) return null;
   const a = frames[0], b = frames[frames.length - 1], len = b - a;
   let closed = true;
-  for (const [c, fs] of W) {
-    if (!fs.has(a) || !fs.has(b)) continue;
-    const ka = keyAt(c, a), kb = keyAt(c, b);
-    if (ka && kb && !eqV(ka.v, kb.v, chEps(c))) { closed = false; break; }
+  for (const c of W.keys()) {
+    if (!eqV(evalCh(c, a), evalCh(c, b), chEps(c))) { closed = false; break; }
   }
   const gap = closed ? 0 : Math.max(1, Math.round(len / (frames.length - 1)));
-  return { a, b, len, closed, gap, period: len + gap, nFrames: frames.length };
+  // только скачки (рисунки покадрового слоя, переключатели, ступенчатые ключи): «возврат» — это просто пауза
+  const steps = [...W.keys()].every((c) => !num(c.k[0].v) || c.k.every((k) => k.i === 'step'));
+  return { a, b, len, closed, gap, steps, period: len + gap, nFrames: frames.length };
 }
+
+// Ключи канала во фрагменте [a, b]; если у канала нет ключа на краю фрагмента, край добавляется
+// ключом-удержанием со значением на этом кадре — тогда каждый повтор в точности повторяет исходник
+function fragment(c, fs, a, b) {
+  const src = c.k.filter((k) => fs.has(k.f)).map((k) => copyKey(k));
+  if (!src.length && !fs.size) src.push({ f: a, v: cp(evalCh(c, a)), i: (c.k.filter((k) => k.f <= a).pop() || c.k[0]).i });
+  if (!src.length) return src;
+  if (src[0].f > a) {
+    let prev = null;
+    for (const k of c.k) { if (k.f < a) prev = k; else break; }
+    src.unshift({ f: a, v: cp(evalCh(c, a)), i: (prev || src[0]).i });
+  }
+  if (src[src.length - 1].f < b) src.push({ f: b, v: cp(evalCh(c, b)), i: src[src.length - 1].i, edge: true });
+  return src;
+}
+
+const atEndMsg = (ws) => (ws.mode === 'sel'
+  ? `Выделенный фрагмент уже доходит до конца сцены (кадр ${app.doc.end}) — повторять до конца нечего.`
+  : `Анимация слоя уже идёт до конца сцены (кадр ${app.doc.end}). Чтобы повторить часть, выделите её ключи на таймлайне рамкой или удлините сцену.`);
 
 function repeatCount(p, { times, pingpong, toEnd }) {
   const P = pingpong ? p.len : p.period;
@@ -177,33 +224,54 @@ function mirrored(src, a, b) {
   return src.map((_, j) => {
     const s = src[m - j];
     const i = j < m ? flipI(src[m - j - 1].i) : src[0].i;
-    return { f: a + b - s.f, v: s.v, i };
+    return { ...s, f: a + b - s.f, v: cp(s.v), i };
   });
 }
 
-export function applyRepeat(ws, opts) {
+// Фрагмент повтора: каналы (вместе со «спутниками») и план
+function repeatSetup(ws) {
   ws = spanSet(ws);
-  const p = repeatPlan(ws.W);
-  if (!p) return { error: 'Нужны ключи хотя бы на двух разных кадрах — выделите фрагмент на таймлайне' };
+  const p0 = repeatPlan(ws.W);
+  if (!p0) return null;
+  const W = companions(ws, p0.a, p0.b);
+  return { ws, W, p: repeatPlan(W) };
+}
+
+export function applyRepeat(ws, opts) {
+  const S = repeatSetup(ws);
+  if (!S) return { error: 'Нужны ключи хотя бы на двух разных кадрах — выделите фрагмент на таймлайне' };
+  const { W, p } = S;
   const P = opts.pingpong ? p.len : p.period;
   const n = repeatCount(p, opts);
-  if (n < 1) return { error: `Фрагмент уже доходит до конца сцены (кадр ${app.doc.end})` };
+  if (n < 1) return { error: atEndMsg(ws) };
   const end = app.doc.end;
   const regionEnd = p.b + n * P;
+  const ripple = !!opts.ripple && !opts.toEnd;
   const out = new Map();
-  let replaced = 0;
-  for (const [c, fs] of ws.W) {
-    const src = c.k.filter((k) => fs.has(k.f)).map((k) => ({ f: k.f, v: cp(k.v), i: k.i }));
-    if (!src.length) continue;
-    // ключи, которые уже стояли в области повторов, заменяются
-    const before = c.k.length;
-    c.k = c.k.filter((k) => !(k.f > p.b && k.f <= regionEnd));
-    replaced += before - c.k.length;
-    const rev = opts.pingpong ? mirrored(src, p.a, p.b) : null;
+  let replaced = 0, shifted = 0, opMax = regionEnd;
+  // исходные ключи фрагмента — до любых изменений
+  const srcs = new Map();
+  for (const [c, fs] of W) { const src = fragment(c, fs, p.a, p.b); if (src.length) srcs.set(c, src); }
+  if (ripple) {
+    // ключи после фрагмента уезжают дальше на длину всех повторов (ничего не теряется)
+    for (const c of rippleChans(S.ws, W)) for (const k of c.k) if (k.f > p.b) { if (k.f <= end) opMax = Math.max(opMax, k.f + n * P); k.f += n * P; shifted++; }
+  }
+  for (const [c, src] of srcs) {
+    const fs = W.get(c);
     const gen = new Set(fs);
+    if (!ripple) {
+      // ключи, которые уже стояли в области повторов, заменяются
+      const before = c.k.length;
+      c.k = c.k.filter((k) => !(k.f > p.b && k.f <= regionEnd));
+      replaced += before - c.k.length;
+    }
+    // удержание в конце исходного фрагмента: иначе следующий повтор изменил бы и сам исходник
+    const tail = src[src.length - 1];
+    if (tail.edge) { delete tail.edge; if (keyIndex(c, p.b) < 0) { setKey(c, p.b, tail.v, tail.i); gen.add(p.b); } }
+    const rev = opts.pingpong ? mirrored(src, p.a, p.b) : null;
     for (let r = 1; r <= n; r++) {
       const seq = rev && r % 2 ? rev : src;
-      for (const k of seq) { setKey(c, k.f + r * P, k.v, k.i); gen.add(k.f + r * P); }
+      for (const k of seq) { putKey(c, k.f + r * P, k); gen.add(k.f + r * P); }
     }
     if (opts.toEnd) {
       // за концом сцены оставляем только один ключ (чтобы движение до последнего кадра было верным)
@@ -213,28 +281,45 @@ export function applyRepeat(ws, opts) {
     }
     out.set(c, gen);
   }
-  return { p, n, P, out, replaced, last: opts.toEnd ? Math.min(regionEnd, end) : regionEnd };
+  return { p, n, P, out, replaced, shifted, opMax, last: opts.toEnd ? Math.min(regionEnd, end) : regionEnd };
 }
 
 function repeatDialog(preset = {}) {
   const ws0 = workSet();
   if (noKeys(ws0)) return;
-  const ws = spanSet(ws0);
-  const p = repeatPlan(ws.W);
-  if (!p) { app.toast('Для повтора нужны ключи хотя бы на двух разных кадрах — выделите фрагмент на таймлайне (рамкой)', 4000); return; }
-  const o = { times: 2, pingpong: false, toEnd: false, ...preset };
+  const S = repeatSetup(ws0);
+  if (!S) { app.toast('Для повтора нужны ключи хотя бы на двух разных кадрах — выделите фрагмент на таймлайне (рамкой)', 4000); return; }
+  const { ws, W, p } = S;
+  // ключи после фрагмента: их можно сдвинуть дальше или заменить повторами
+  const later = [], laterW = [];
+  for (const c of rippleChans(ws, W)) for (const k of c.k) if (k.f > p.b) { later.push(k.f); if (W.has(c)) laterW.push(k.f); }
+  const o = { times: 2, pingpong: false, toEnd: false, ripple: later.length > 0, ...preset };
   const res = h('div', { class: 'ko-res' });
+  const rippleF = checkField('Сдвинуть следующие ключи', o.ripple, (v) => { o.ripple = v; upd(); }, 'Анимация после фрагмента начнётся после повторов, а не заменится ими');
   const timesF = numField('Сколько раз', o.times, { min: 1, max: 100, step: 1, prec: 0, onLive: (v) => { o.times = v; upd(); }, onCommit: (v) => { o.times = v; upd(); } });
   const upd = () => {
     timesF.classList.toggle('ko-dis', o.toEnd);
+    rippleF.style.display = later.length ? '' : 'none';
+    rippleF.classList.toggle('ko-dis', o.toEnd);
     const P = o.pingpong ? p.len : p.period;
     const n = repeatCount(p, o);
     const last = o.toEnd ? app.doc.end : p.b + n * P;
     res.replaceChildren();
-    if (n < 1) { res.append(h('span', { class: 'warn' }, `Фрагмент уже доходит до конца сцены (кадр ${app.doc.end}).`)); return; }
-    res.append('Повторов: ', h('b', null, String(n)), ' — анимация продлится до кадра ', h('b', null, String(last)), '.');
-    if (!o.toEnd && last > app.doc.end) res.append(' Сцена будет продлена.');
-    if (!o.pingpong && !p.closed) res.append(h('br'), h('span', { class: 'warn' }, `Последний ключ отличается от первого — между повторами будет плавный возврат к началу (${plural(p.gap, FRAMES)}).`));
+    if (n < 1) { res.append(h('span', { class: 'warn' }, atEndMsg(ws))); return; }
+    res.append('Повторов: ', h('b', null, String(n)), ' — повторы займут кадры ', h('b', null, `${p.b + 1}–${last}`), '.');
+    const rip = o.ripple && !o.toEnd && later.length;
+    const lastAll = rip ? Math.max(last, ...later.filter((f) => f <= app.doc.end).map((f) => f + n * P)) : last;
+    if (lastAll > app.doc.end && !o.toEnd) res.append(` Сцена будет продлена до кадра ${lastAll}.`);
+    if (rip) res.append(h('br'), `Следующие ключи сдвинутся на ${plural(n * P, FRAMES)} позже.`);
+    else {
+      const lost = laterW.filter((f) => f <= last).length;
+      if (lost) res.append(h('br'), h('span', { class: 'warn' }, `Ключи на кадрах ${p.b + 1}–${last} (${lost} шт.) будут заменены повторами.`));
+    }
+    if (!o.pingpong && !p.closed) {
+      res.append(h('br'), p.steps
+        ? `Последний ключ держится ${plural(p.gap, FRAMES)}, затем повтор начинается сначала.`
+        : h('span', { class: 'warn' }, `Последний ключ отличается от первого — между повторами будет плавный возврат к началу (${plural(p.gap, FRAMES)}).`));
+    }
     if (o.pingpong) res.append(h('br'), 'Движение пойдёт вперёд и назад, как маятник.');
   };
   dialog({
@@ -245,6 +330,7 @@ function repeatDialog(preset = {}) {
       timesF,
       checkField('Туда-обратно (пинг-понг)', o.pingpong, (v) => { o.pingpong = v; upd(); }, 'Каждый второй повтор идёт в обратную сторону'),
       checkField(`До конца сцены (кадр ${app.doc.end})`, o.toEnd, (v) => { o.toEnd = v; upd(); }, 'Повторять, пока не закончится сцена'),
+      rippleF,
       res,
     ),
     buttons: [{ label: 'Отмена' }, { label: 'Повторить', primary: true, action: () => { runRepeat(o); } }],
@@ -257,14 +343,15 @@ function runRepeat(o) {
   if (noKeys(ws)) return;
   const before = docMaxKey();
   const r = applyRepeat(ws, o);
-  if (r.error) { app.toast(r.error, 3500); return; }
-  const extra = o.toEnd ? '' : fitEnd(before, r.last, false);
+  if (r.error) { app.toast(r.error, 5000); return; }
+  const extra = o.toEnd ? '' : fitEnd(before, r.opMax, false);
   reselect(ws, r.out);
   app.commit(o.toEnd ? 'Зацикливание до конца сцены' : 'Повтор ключей');
   let msg = o.toEnd
     ? `Зациклено до конца сцены: ${plural(r.n, ['повтор', 'повтора', 'повторов'])}${o.pingpong ? ' туда-обратно' : ''}.`
     : `Повторено ${plural(r.n, TIMES)}${o.pingpong ? ' туда-обратно' : ''}: ключи до кадра ${r.last}.`;
-  if (!o.pingpong && !r.p.closed) msg += ' Добавлен плавный возврат к началу.';
+  if (!o.pingpong && !r.p.closed && !r.p.steps) msg += ' Добавлен плавный возврат к началу.';
+  if (r.shifted) msg += ` Следующие ключи сдвинуты на ${plural(r.n * r.P, FRAMES)}.`;
   if (r.replaced) msg += ` Заменено старых ключей: ${r.replaced}.`;
   app.toast(msg + extra, 4000);
 }
@@ -281,10 +368,12 @@ export function applyStretch(ws, factor, ripple = true) {
   const nb = map(b), delta = nb - b, end = app.doc.end;
   const out = new Map();
   let opMax = 0; // куда ушли ключи, которые были в пределах сцены
+  const rippled = new Set();
   for (const [c, fs] of ws.W) {
     const moving = c.k.filter((k) => fs.has(k.f) && k.f > 0);
     if (!moving.length) { out.set(c, new Set(fs)); continue; }
     const rest = c.k.filter((k) => !(fs.has(k.f) && k.f > 0));
+    rippled.add(c);
     if (ripple && delta) for (const k of rest) if (k.f > b) { if (k.f <= end) opMax = Math.max(opMax, k.f + delta); k.f += delta; }
     for (const k of moving) if (k.f <= end) opMax = Math.max(opMax, map(k.f));
     // несколько ключей на одном кадре → остаётся ближайший к точному времени
@@ -295,12 +384,14 @@ export function applyStretch(ws, factor, ripple = true) {
       if (!cur || err <= cur.err) placed.set(t, { k, err });
     }
     const keep = rest.filter((k) => !placed.has(k.f));
-    c.k = keep.concat([...placed].map(([t, { k }]) => ({ f: t, v: k.v, i: k.i })));
+    c.k = keep.concat([...placed].map(([t, { k }]) => copyKey(k, t)));
     tidy(c);
     const gen = new Set([...placed.keys()]);
     if (fs.has(0)) gen.add(0);
     out.set(c, gen);
   }
+  // остальные каналы тех же строк: их ключи после фрагмента тоже сдвигаются
+  if (ripple && delta) for (const c of rippleChans(ws, ws.W)) if (!rippled.has(c)) for (const k of c.k) if (k.f > b) { if (k.f <= end) opMax = Math.max(opMax, k.f + delta); k.f += delta; }
   return { a, b, nb, out, opMax };
 }
 
@@ -361,16 +452,37 @@ function runStretch(o) {
 }
 
 // ---------- обращение ----------
+// Ключи кадра 0 (поза покоя) остаются на месте. Если движение начинается от позы покоя
+// (у канала первый ключ после начала сцены), её роль во фрагменте играет первый кадр сцены —
+// так даже простое «из A в B» превращается в «из B в A».
 export function applyReverse(ws) {
+  const st = Math.max(1, app.doc.start | 0);
   const frames = framesOf(ws.W, true);
-  if (frames.length < 2) return { error: 'Для обращения нужны ключи хотя бы на двух кадрах (кроме кадра 0)' };
-  const a = frames[0], b = frames[frames.length - 1];
+  if (!frames.length) return { error: 'Для обращения нужны ключи хотя бы на двух кадрах (кроме кадра 0)' };
+  const fromRest = (c, fs) => {
+    if (!fs.has(0) || app.doc.start < 1) return false;
+    const k1 = c.k.find((k) => k.f > 0 && fs.has(k.f));
+    return !!k1 && k1.f > st;
+  };
+  let a = frames[0];
+  const b = frames[frames.length - 1];
+  for (const [c, fs] of ws.W) if (fromRest(c, fs)) { a = Math.min(a, st); break; }
+  if (b <= a) return { error: 'Для обращения нужны ключи хотя бы на двух кадрах (кроме кадра 0)' };
   const out = new Map();
   for (const [c, fs] of ws.W) {
-    const src = c.k.filter((k) => fs.has(k.f) && k.f > 0);
     const gen = new Set(fs.has(0) ? [0] : []);
+    const src = c.k.filter((k) => fs.has(k.f) && k.f > 0).map((k) => copyKey(k));
     if (src.length) {
-      const nk = mirrored(src.map((k) => ({ f: k.f, v: k.v, i: k.i })), a, b);
+      // общий для всех каналов отрезок [a, b]: недостающие края — значения канала на этих кадрах
+      if (src[0].f > a) {
+        // от позы покоя: замкнутое движение (в конце снова покой) обращаем точно по кадрам,
+        // а «из A в B» должно закончиться ровно в позе покоя A
+        const rest = fromRest(c, fs);
+        const v = rest && !eqV(evalCh(c, b), c.k[0].v, chEps(c)) ? c.k[0].v : evalCh(c, a);
+        src.unshift({ f: a, v: cp(v), i: rest ? c.k[0].i : src[0].i });
+      }
+      if (src[src.length - 1].f < b) src.push({ f: b, v: cp(evalCh(c, b)), i: src[src.length - 1].i });
+      const nk = mirrored(src, a, b);
       // последний ключ ведёт к ключам после фрагмента так же, как раньше
       nk[nk.length - 1].i = src[src.length - 1].i;
       const nf = new Set(nk.map((k) => k.f));

@@ -1,10 +1,10 @@
 // Общие помощники для «анимации жестом» (record.js, followpath.js):
 // цель анимации (слой или кость), пространство родителя, подгонка ключей под значения по кадрам.
 import { app } from '../../app.js';
-import { M, RAD, DEG, normAngle } from '../../util.js';
+import { M, RAD, DEG, normAngle, h } from '../../util.js';
 import { setKey, evalCh } from '../../anim.js';
 import { evaluate, camMatrix } from '../../scene.js';
-import { layerBox, setOrigin } from '../../tools.js';
+import { layerBox, setOrigin, pickLayerAt, pickTarget, hitBone } from '../../tools.js';
 
 // Сцена на кадре f (текущий кадр — из кэша редактора)
 export function sceneAt(f) { return f === app.frame ? app.scene() : evaluate(app.doc, f); }
@@ -17,7 +17,7 @@ export function docAt(f, sx, sy) {
 
 // Почему слой нельзя анимировать жестом (null — можно)
 export function whyNot(L) {
-  if (!L) return 'Сначала выберите слой, который нужно анимировать, — кликните его в панели «Слои»';
+  if (!L) return 'Зажмите кнопку мыши прямо на объекте, который нужно анимировать (или выберите его слой в панели «Слои»)';
   if (L.lock) return `Слой «${L.name}» заблокирован — снимите замок в панели «Слои»`;
   if (L.type === 'audio') return 'Звуковой слой нельзя двигать — выберите слой с рисунком';
   if (!L.vis) return `Слой «${L.name}» скрыт — включите его (значок глаза в панели «Слои»)`;
@@ -39,6 +39,59 @@ export function centerPivot(L) {
 export function layerTarget(L) { return { kind: 'layer', L, name: `слой «${L.name}»`, pos: L.pos, rot: L.rot }; }
 export function boneTarget(B, b) { return { kind: 'bone', L: B, B, b, name: `кость «${b.name}»`, pos: b.pos, rot: b.ang }; }
 
+// Слой, который анимируем вместо L: рисунок внутри переключателя (покадровый слой, рот для липсинка)
+// двигается вместе со всем переключателем, иначе остальные рисунки останутся на месте
+export function animLayer(L) {
+  let X = L;
+  for (let i = 0; X && i < 32; i++) {
+    const p = app.idx.parent.get(X.id);
+    if (!p || p.type !== 'switch') break;
+    X = p;
+  }
+  return X;
+}
+
+// Что анимировать при нажатии в точке e (экранные координаты; null — без учёта курсора):
+// 1) кость персонажа, с которым работаем (bones: true), 2) другой объект под курсором — как клик
+// инструментом «Трансформация» (Alt — всегда активный слой), 3) активный слой (движение — где угодно).
+// → { L, tg, hb, pick } или null; pick — слой, который нужно сделать активным.
+export function resolveTarget(e, { bones = true } = {}) {
+  const A = app.active && app.idx.layers.get(app.active.id) === app.active ? app.active : null;
+  const targetOf = (L, hb) => {
+    if (L.type === 'bone') {
+      if (hb) return boneTarget(L, hb.bone);
+      const b = selectedBone(L);
+      if (b) return boneTarget(L, b);
+    }
+    return layerTarget(L);
+  };
+  const B = A ? app.boneLayerFor(A) : null;
+  if (e && bones && B && B.vis && !B.lock) {
+    const hb = hitBone(B, e.sx, e.sy, 11);
+    if (hb) return { L: B, tg: boneTarget(B, hb.bone), hb, pick: null };
+  }
+  if (e && !e.alt) {
+    let hit = null;
+    try { hit = pickLayerAt(e.sx, e.sy); } catch { hit = null; }
+    if (hit && !(A && hit.path.includes(A))) {
+      const T = animLayer(pickTarget(hit));
+      if (T && T !== A && (!A || T !== animLayer(A))) {
+        const hb = bones && T.type === 'bone' ? hitBone(T, e.sx, e.sy, 11) : null;
+        return { L: T, tg: targetOf(T, hb), hb, pick: T };
+      }
+    }
+  }
+  if (!A) return null;
+  const L = animLayer(A);
+  return { L, tg: targetOf(L, null), hb: null, pick: null };
+}
+
+// Ключ цели (чтобы перерисовывать подсказку только при смене цели)
+export const targetKey = (res) => (res ? res.tg.kind + ':' + res.L.id + (res.tg.b ? ':' + res.tg.b.id : '') : '');
+
+// Цель ещё относится к текущему документу (после отмены/загрузки объекты слоёв заменяются)
+export const targetAlive = (res) => !!res && !!app.idx && app.idx.layers.get(res.L.id) === res.L && (!res.tg.b || res.L.bones.includes(res.tg.b));
+
 // Единственная выделенная кость активного слоя костей
 export function selectedBone(B) {
   if (!B || B.type !== 'bone' || app.sel.bones.size !== 1) return null;
@@ -53,6 +106,14 @@ export function parentWorld(tg, S) {
   if (tg.kind === 'bone') {
     const pm = (tg.b.parent != null && rec.bc && rec.bc.Mt.get(tg.b.parent)) || M.id();
     return M.mul(rec.bc ? rec.bc.world : rec.world, pm);
+  }
+  // вне слоя костей мир = мир родителя · local — берём мир родителя напрямую
+  // (без обращения local: при масштабе 0, например у «появления из точки», оно вырождено)
+  if (!rec.boneCtx) {
+    const par = app.idx.parent.get(tg.L.id);
+    const pr = par && S.layers.get(par.id);
+    if (pr) return pr.world;
+    if (!par) return M.id();
   }
   return M.mul(rec.world, M.inv(rec.local));
 }
@@ -142,20 +203,82 @@ export function fitKeys(c, f0, vals, { tol, speed = 0, interp = 'smooth', all = 
 export function saveChans(chans) { return chans.map((c) => [c, JSON.stringify(c.k)]); }
 export function restoreChans(saved) { for (const [c, s] of saved) c.k = JSON.parse(s); }
 
+// Если после записанного участка у каналов остались прежние ключи, объект продолжит двигаться к ним.
+// Показать уведомление с кнопкой «Остановить на кадре f1» (убирает те ключи одним шагом отмены).
+// chanRef(L, c) — ссылка на канал c слоя L или одной из его костей (переживает отмену/повтор)
+export function chanRef(L, c) {
+  for (const obj of [L, ...(L.bones || [])]) {
+    const ch = ['pos', 'rot', 'ang'].find((k) => obj[k] === c);
+    if (ch) return { L: L.id, b: obj === L ? null : obj.id, ch };
+  }
+  return null;
+}
+function chanOf(ref) {
+  const L = app.idx.layers.get(ref.L);
+  if (!L) return null;
+  const obj = ref.b == null ? L : (L.bones || []).find((b) => b.id === ref.b);
+  return obj && obj[ref.ch] && Array.isArray(obj[ref.ch].k) ? obj[ref.ch] : null;
+}
+export function offerTrim(refs, f1, what) {
+  if (f1 >= app.doc.end) return; // дальше конца анимации ключи не видны
+  refs = refs.filter(Boolean);
+  const later = refs.map(chanOf).filter((c) => c && c.k.some((k) => k.f > f1));
+  if (!later.length) return;
+  const lastF = Math.max(...later.map((c) => c.k[c.k.length - 1].f));
+  const entry = app.history.stack[app.history.i];
+  let used = false;
+  const btn = h('button', {
+    class: 'btn', style: { pointerEvents: 'auto', marginLeft: '8px', padding: '2px 10px' },
+    onclick: () => {
+      if (used) return;
+      if (app.history.stack[app.history.i] !== entry) { app.toast('Кнопка устарела: после записи проект уже менялся', 2600); return; }
+      used = true;
+      for (const c of refs.map(chanOf)) if (c) c.k = c.k.filter((k) => k.f <= f1);
+      app.commit('Остановить после кадра ' + f1);
+      app.toast(`Готово: после кадра ${f1} ${what} остаётся на месте. Ctrl+Z — вернуть`, 3200);
+      btn.disabled = true;
+    },
+  }, `Остановить на кадре ${f1}`);
+  app.toast(h('span', null, `Дальше (до кадра ${lastF}) ${what} поедет к прежним ключам.`, btn), 8000);
+}
+
 // Русские формы множественного числа: plural(5, ['кадр', 'кадра', 'кадров'])
 export function plural(n, f) {
   const a = Math.abs(n) % 100, b = a % 10;
   return f[a > 10 && a < 20 ? 2 : b === 1 ? 0 : b > 1 && b < 5 ? 1 : 2];
 }
 
+// Плашка по центру не должна закрывать надписи поверх холста («Кадр N», масштаб) — тогда опускаем её ниже
+function belowHud(canvas, px, y, w, hh) {
+  const host = canvas.parentElement;
+  if (!host) return y;
+  const cr = canvas.getBoundingClientRect();
+  for (const el of host.querySelectorAll('.hud')) {
+    const r = el.getBoundingClientRect();
+    if (!r.width) continue;
+    const l = r.left - cr.left, rt = r.right - cr.left, t = r.top - cr.top, b = r.bottom - cr.top;
+    if (px < rt + 6 && px + w > l - 6 && y < b + 4 && y + hh > t - 4) y = Math.max(y, b + 6);
+  }
+  return y;
+}
+
 // Плашка с текстом по центру сверху холста (экранные координаты)
 export function drawPill(ctx, text, { y = 14, bg = 'rgba(20,22,26,.86)', fg = '#fff', dot = null, x = null } = {}) {
   ctx.save();
   ctx.font = '600 13px system-ui, -apple-system, "Segoe UI", sans-serif';
-  const pad = 12, dotW = dot ? 16 : 0;
-  const w = ctx.measureText(text).width + pad * 2 + dotW, hh = 28;
-  const cw = ctx.canvas.width / (ctx.getTransform().a || 1);
-  const px = x == null ? Math.round(cw / 2 - w / 2) : x;
+  const pad = 12, dotW = dot ? 16 : 0, hh = 28;
+  const tf = ctx.getTransform(), cw = ctx.canvas.width / (tf.a || 1), ch = ctx.canvas.height / (tf.d || 1);
+  // в узком окне длинный текст укорачивается, а не обрезается краем холста
+  const room = cw - 8 - pad * 2 - dotW;
+  if (ctx.measureText(text).width > room) {
+    while (text.length > 8 && ctx.measureText(text + '…').width > room) text = text.slice(0, -1);
+    text = text.trimEnd() + '…';
+  }
+  const w = ctx.measureText(text).width + pad * 2 + dotW;
+  // плашка у курсора не уходит за край холста
+  const px = x == null ? Math.round(cw / 2 - w / 2) : Math.max(4, Math.min(x, cw - w - 4));
+  if (x == null) y = belowHud(ctx.canvas, px, y, w, hh);
+  y = Math.max(4, Math.min(y, ch - hh - 4));
   ctx.fillStyle = bg;
   ctx.beginPath();
   if (ctx.roundRect) ctx.roundRect(px, y, w, hh, 14); else ctx.rect(px, y, w, hh);

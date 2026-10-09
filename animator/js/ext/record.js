@@ -1,15 +1,15 @@
-// Запись движения (J): зажмите мышь и ведите — кадры идут в реальном времени,
-// а активный слой (или выделенная кость) повторяет движение указателя. Отпустили — запись готова.
+// Запись движения (J): зажмите мышь на объекте и ведите — кадры идут в реальном времени,
+// а объект (или кость персонажа) повторяет движение указателя. Отпустили — запись готова.
 import { app } from '../app.js';
-import { registerTool, hitBone, boneScreen, layerBox, drawBBox, drawOrigin, setOrigin } from '../tools.js';
+import { registerTool, boneScreen, layerBox, drawBBox, drawOrigin, setOrigin } from '../tools.js';
 import { setKey, evalCh } from '../anim.js';
 import { M, RAD, clamp, normAngle } from '../util.js';
 import { boneMats } from '../scene.js';
 import { registerIcon } from '../icons.js';
 import { registerMenu } from '../ext.js';
 import {
-  sceneAt, docAt, whyNot, layerTarget, boneTarget, selectedBone, parentWorld, toParentV, unwrapDeg,
-  smoothVals, fitKeys, saveChans, restoreChans, plural, drawPill, strokeDocPath, centerPivot,
+  sceneAt, docAt, whyNot, selectedBone, parentWorld, toParentV, unwrapDeg, resolveTarget, targetKey, targetAlive,
+  smoothVals, fitKeys, saveChans, restoreChans, plural, drawPill, strokeDocPath, centerPivot, chanRef, offerTrim,
 } from './record/keyfit.js';
 
 registerIcon('record', '<circle cx="10" cy="13" r="7"/><circle cx="10" cy="13" r="3" fill="currentColor"/><path d="M16.5 4.5c1.8.9 3.2 2.6 3.8 4.6M15.3 7.4c.9.5 1.6 1.4 1.9 2.4"/>');
@@ -19,16 +19,6 @@ const RED = '#ff4d5e';
 
 let R = null;          // идёт запись
 let fade = null;       // след последней записи (гаснет)
-
-// Решить, что записывать при нажатии в точке e
-function pickTarget(L, e) {
-  if (L.type !== 'bone') return { tg: layerTarget(L) };
-  const hb = e ? hitBone(L, e.sx, e.sy, 11) : null;
-  if (hb) return { tg: boneTarget(L, hb.bone), hit: hb };
-  const b = selectedBone(L);
-  if (b) return { tg: boneTarget(L, b) };
-  return { tg: layerTarget(L) };
-}
 
 function startFrame() {
   const d = app.doc;
@@ -81,12 +71,17 @@ function pointerAt(r, t) {
   return [a.sx + (b.sx - a.sx) * k, a.sy + (b.sy - a.sy) * k];
 }
 
+// Что движется — для подсказок
+const what = (tg) => (tg.kind === 'bone' ? 'кость' : 'объект');
+
 function start(e) {
-  const L = app.active;
-  const why = whyNot(L);
+  const res = resolveTarget(e);
+  const why = whyNot(res && res.L);
   if (why) { app.toast(why, 3500); return; }
-  const { tg, hit } = pickTarget(L, e);
-  if (tg.kind === 'bone') { app.sel.bones.clear(); app.sel.bones.add(tg.b.id); }
+  if (res.pick) { app.setActive(res.pick.id); app.rescene(); }
+  const { tg, hb: hit } = res;
+  const L = tg.L;
+  if (tg.kind === 'bone' && app.boneLayerFor(app.active) === tg.B) { app.sel.bones.clear(); app.sel.bones.add(tg.b.id); }
   const d = app.doc;
   const f0 = startFrame();
   app.setFrame(f0);
@@ -96,7 +91,7 @@ function start(e) {
   const r = {
     tg, f0, last: f0 - 1, fEnd: Math.max(f0, d.end), fps: d.fps || 24,
     speed: parseFloat(opt('recSpeed', '1.0')) || 1,
-    t0: performance.now(), samples: [{ t: performance.now(), sx: e.sx, sy: e.sy }],
+    t0: performance.now(), samples: [{ t: performance.now(), sx: e.sx, sy: e.sy }], picked: !!res.pick,
     press, moved: false, trail: [], vals: new Map(), raf: 0,
     rotate: tg.kind === 'layer' && opt('recRotate', false),
     tolPos: app.pxToDoc(2) / (M.scaleFactor(P0) || 1),
@@ -116,7 +111,7 @@ function start(e) {
     const B = tg.B, b = tg.b;
     const byId = new Map(B.bones.map((x) => [x.id, x]));
     const isRoot = b.parent == null || !byId.has(b.parent);
-    const ik = opt('recIK', false);
+    const ik = !!opt('recIK', false);
     const recB = S.layers.get(B.id);
     const Wb = M.mul(recB.bc.world, recB.bc.Mt.get(b.id));
     if (ik && isRoot) {
@@ -143,6 +138,7 @@ function start(e) {
   r.saved = r.saved ? r.saved.concat(saveChans(r.chans.slice(1))) : saveChans(r.chans);
   for (const c of r.chans) r.vals.set(c, []);
   R = r;
+  window.addEventListener('wheel', onWheel, WHEEL);
   fade = null;
   writeFrame(r, f0);
   r.last = f0;
@@ -240,8 +236,7 @@ function rotationFromPath(pos, rot0, thr) {
 function finish(reason) {
   const r = R;
   if (!r) return;
-  cancelAnimationFrame(r.raf);
-  R = null;
+  stopRec();
   if (reason === 'up') {
     const f = frameAtTime(r, performance.now());
     while (r.last < f) writeFrame(r, ++r.last);
@@ -251,8 +246,11 @@ function finish(reason) {
   if (!r.moved || n < 2) {
     if (r.origin0) r.tg.L.origin = r.origin0;
     app.setFrame(r.f0);
-    app.changed();
-    app.toast(r.moved ? 'Слишком коротко — держите кнопку мыши дольше' : 'Движения не было. Зажмите кнопку мыши и ведите — объект повторит движение', 3500);
+    quietRefresh();
+    const sel = r.picked ? `Выбран ${r.tg.name}. ` : '';
+    let msg = r.moved ? 'Слишком коротко — держите кнопку мыши дольше' : `Движения не было. Зажмите кнопку мыши и ведите — ${what(r.tg)} повторит движение`;
+    if (r.fEnd <= r.f0) msg = `Анимация кончается на кадре ${r.fEnd} — записывать некуда. Увеличьте конец «Диапазона» внизу (у таймлайна)`;
+    app.toast(sel + msg, 4000);
     return;
   }
   const simplify = opt('recSimplify', true);
@@ -282,20 +280,27 @@ function finish(reason) {
   app.commit('Запись движения');
   fade = { pts: r.trail, t: performance.now() };
   animateFade();
-  const tail = reason === 'end' ? ' (дошли до конца анимации)' : '';
+  let tail = '';
+  if (reason === 'end') tail = n < r.fps ? ` (анимация кончается на кадре ${f1} — для записи подольше увеличьте конец «Диапазона» внизу)` : ' (дошли до конца анимации)';
   const piv = r.pivotMoved ? ' Точка вращения перенесена в центр объекта.' : '';
   app.toast(`Записано: ${r.tg.name}, кадры ${r.f0}–${f1}${tail}, ${keys} ${plural(keys, ['ключ', 'ключа', 'ключей'])}.${piv} Пробел — посмотреть, Ctrl+Z — отменить`, 4500);
+  offerTrim(r.chans.map((c) => chanRef(r.tg.L, c)), f1, what(r.tg));
+}
+
+// Перерисовать без пометки «есть несохранённые изменения» (документ вернулся к прежнему виду)
+function quietRefresh() {
+  app.render();
+  app.refresh(['inspector', 'timeline', 'optbar', 'status']);
 }
 
 function cancel(msg = 'Запись отменена') {
   const r = R;
   if (!r) return;
-  cancelAnimationFrame(r.raf);
-  R = null;
+  stopRec();
   restoreChans(r.saved);
   if (r.origin0) r.tg.L.origin = r.origin0;
   app.setFrame(r.f0);
-  app.changed();
+  quietRefresh();
   if (msg) app.toast(msg);
 }
 
@@ -318,8 +323,16 @@ function onKey(ev) {
 }
 window.addEventListener('keydown', onKey, true);
 window.addEventListener('keyup', onKey, true);
+// колесо мыши во время записи сдвинуло бы вид — объект бы «прыгнул» (слушатель есть только во время записи)
+const WHEEL = { capture: true, passive: false };
+function onWheel(ev) { if (R) { ev.preventDefault(); ev.stopImmediatePropagation(); } }
+function stopRec() {
+  if (R) cancelAnimationFrame(R.raf);
+  R = null;
+  window.removeEventListener('wheel', onWheel, WHEEL);
+}
 window.addEventListener('blur', () => { if (R) finish('blur'); });
-app.on('docloaded', () => { if (R) { cancelAnimationFrame(R.raf); R = null; } fade = null; });
+app.on('docloaded', () => { stopRec(); fade = null; });
 
 // Подсветка цели
 function drawTarget(ctx, tg, color) {
@@ -348,12 +361,12 @@ function drawTarget(ctx, tg, color) {
 registerTool({
   id: 'record', name: 'Запись движения', icon: 'record', key: 'j', group: 'anim', simple: true, cursor: 'crosshair', coalesce: true,
   avail: () => true,
-  hint: 'Зажмите кнопку мыши и ведите — объект повторяет движение, кадры идут в реальном времени. Отпустите — готово. Esc — отмена. На слое костей тяните за кость.',
+  hint: 'Зажмите кнопку мыши на объекте и ведите — он повторяет движение, кадры идут в реальном времени. Отпустите — готово. Esc — отмена. У персонажа тяните за кость. Alt — записать выбранный слой, где бы ни нажали.',
   options: () => [
     { type: 'select', key: 'recSpeed', label: 'Скорость', def: '1.0', items: { '0.25': '0.25× — медленно', '0.5': '0.5×', '1.0': '1× — как в жизни' } },
     { type: 'check', key: 'recSimplify', label: 'Упростить ключи', def: true },
     { type: 'check', key: 'recRotate', label: 'Поворот по движению', def: false, show: () => !app.active || app.active.type !== 'bone' || !selectedBone(app.active) },
-    { type: 'check', key: 'recIK', label: 'Кость: тянуть цепочку (IK)', def: false, show: () => !!app.active && app.active.type === 'bone' },
+    { type: 'check', key: 'recIK', label: 'Кость: тянуть цепочку (IK)', def: false, show: () => !!app.active && !!app.boneLayerFor(app.active) },
   ],
   down(e) { if (!R) start(e); },
   move(e) {
@@ -369,9 +382,9 @@ registerTool({
   cancel() { cancel(null); },
   hover(e) {
     app.setCursor('crosshair');
-    const L = app.active;
-    const nh = L && !L.lock && L.type === 'bone' ? (hitBone(L, e.sx, e.sy, 11) || {}).bone || null : null;
-    if (nh !== (this.hv || null)) { this.hv = nh; app.render(); }
+    const res = resolveTarget(e);
+    if (targetKey(res) !== targetKey(this.hv)) app.render();
+    this.hv = res;
   },
   overlay(ctx) {
     const r = R;
@@ -391,13 +404,11 @@ registerTool({
       const a = 1 - (performance.now() - fade.t) / 1800;
       if (a > 0) strokeDocPath(ctx, fade.pts, { color: RED, width: 2.5, dash: [7, 5], alpha: a });
     }
-    const L = app.active;
-    if (!L || L.lock || L.type === 'audio') return;
-    let tg;
-    if (L.type === 'bone' && this.hv && L.bones.includes(this.hv)) tg = boneTarget(L, this.hv);
-    else tg = pickTarget(L, null).tg;
-    drawTarget(ctx, tg, '#ff8a95');
-    drawPill(ctx, `Зажмите и ведите: ${tg.name} · с кадра ${startFrame()}`, { dot: RED });
+    const res = targetAlive(this.hv) ? this.hv : resolveTarget(null);
+    if (!res) { drawPill(ctx, 'Наведите на объект, зажмите кнопку мыши и ведите', { dot: RED }); return; }
+    if (whyNot(res.L)) return;
+    drawTarget(ctx, res.tg, '#ff8a95');
+    drawPill(ctx, `Зажмите и ведите: ${res.tg.name} · с кадра ${startFrame()}`, { dot: RED });
   },
 });
 

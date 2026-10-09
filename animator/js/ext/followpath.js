@@ -1,4 +1,4 @@
-// Путь движения (U): нарисуйте путь мышью — активный слой (или выделенная кость) поедет по нему,
+// Путь движения (U): нарисуйте путь мышью от объекта — объект (или выделенная кость) поедет по нему,
 // начиная с текущего кадра. Ключи расставляются по длине пути, с плавным стартом и финишем.
 import { app } from '../app.js';
 import { registerTool, layerBox, drawBBox, drawOrigin, boneScreen } from '../tools.js';
@@ -7,8 +7,8 @@ import { M, RAD } from '../util.js';
 import { registerIcon } from '../icons.js';
 import { registerMenu, registerOverlay } from '../ext.js';
 import {
-  sceneAt, whyNot, layerTarget, boneTarget, selectedBone, parentWorld, toParentV, unwrapDeg,
-  smoothVals, fitKeys, plural, drawPill, strokeDocPath, centerPivot,
+  sceneAt, whyNot, parentWorld, toParentV, unwrapDeg, resolveTarget, targetKey, targetAlive,
+  smoothVals, fitKeys, plural, drawPill, strokeDocPath, centerPivot, chanRef, offerTrim,
 } from './record/keyfit.js';
 
 registerIcon('followpath', '<path d="M4 19c2.5-7 7-1.5 9.5-7.5S17.5 5 20.5 5" stroke-dasharray="2.6 2.4"/><circle cx="4.5" cy="18.5" r="2.2" fill="currentColor"/><path d="M16.8 3.4L20.8 5l-1.9 3.7"/>');
@@ -25,13 +25,8 @@ function startFrame() {
   return app.frame <= 0 ? Math.max(1, d.start) : app.frame;
 }
 
-function target(L) {
-  if (L.type === 'bone') {
-    const b = selectedBone(L);
-    if (b) return boneTarget(L, b);
-  }
-  return layerTarget(L);
-}
+// Цель пути: объект в начале пути, иначе выбранный слой (на слое костей — выделенная кость)
+const resolveAt = (e) => resolveTarget(e, { bones: false });
 
 const frameWord = (n) => plural(n, ['кадр', 'кадра', 'кадров']);
 const easeIO = (t) => 0.5 - 0.5 * Math.cos(Math.PI * t);
@@ -71,16 +66,15 @@ function tangentAt(P, s) {
   return [b[0] - a[0], b[1] - a[1]];
 }
 
-function apply(raw) {
-  const L = app.active;
-  const why = whyNot(L);
-  if (why) { app.toast(why, 3500); return; }
+function apply(raw, res) {
+  if (!targetAlive(res)) return;
+  const tg = res.tg, L = res.L;
   const P = preparePath(raw);
   if (P.total < app.pxToDoc(12)) {
-    app.toast('Путь слишком короткий — проведите мышью линию, по которой поедет объект', 3500);
+    const sel = res.pick ? `Выбран ${tg.name}. Теперь проведите` : 'Путь слишком короткий — проведите';
+    app.toast(`${sel} от объекта линию, по которой он поедет`, 3500);
     return;
   }
-  const tg = target(L);
   const doc = app.doc;
   const dur = Math.max(2, Math.round(+opt('fpDur', 24) || 24));
   const ease = opt('fpEase', true), rotate = opt('fpRotate', false), back = opt('fpBack', false);
@@ -132,6 +126,7 @@ function apply(raw) {
   if (tg.kind === 'layer' && L.type === 'bone') msg += ' Чтобы двигать одну кость — выделите её.';
   msg += ' Пробел — посмотреть.';
   app.toast(msg, 5000);
+  offerTrim([chanRef(L, tg.pos)].concat(rotate ? [chanRef(L, tg.rot)] : []), fLast, tg.kind === 'bone' ? 'кость' : 'объект');
 }
 
 function animateFade() {
@@ -144,8 +139,8 @@ function animateFade() {
   requestAnimationFrame(step);
 }
 
-function drawTargetHint(ctx, L) {
-  const tg = target(L);
+function drawTargetHint(ctx, tg) {
+  const L = tg.L;
   if (tg.kind === 'bone') {
     const s = boneScreen(tg.B, tg.b);
     if (!s) return;
@@ -156,12 +151,11 @@ function drawTargetHint(ctx, L) {
     ctx.lineWidth = 9;
     ctx.beginPath(); ctx.moveTo(s.o[0], s.o[1]); ctx.lineTo(s.t[0], s.t[1]); ctx.stroke();
     ctx.restore();
-    return tg;
+    return;
   }
   const bb = layerBox(L);
   if (bb) { ctx.save(); ctx.setLineDash([6, 4]); drawBBox(ctx, bb, BLUE); ctx.restore(); }
   drawOrigin(ctx, L);
-  return tg;
 }
 
 function drawArrowHead(ctx, pts) {
@@ -192,7 +186,7 @@ function drawArrowHead(ctx, pts) {
 registerTool({
   id: 'followpath', name: 'Путь движения', icon: 'followpath', key: 'u', group: 'anim', simple: true, cursor: 'crosshair', coalesce: true,
   avail: () => true,
-  hint: 'Нарисуйте мышью путь — выбранный слой поедет по нему с текущего кадра. Начинайте путь от самого объекта. На слое костей выделенная кость двигается по пути.',
+  hint: 'Нарисуйте мышью путь, начиная от объекта, — объект поедет по нему с текущего кадра. Alt — путь для выбранного слоя, где бы ни начали. На слое костей выделенная кость двигается по пути.',
   options: () => [
     { type: 'number', key: 'fpDur', label: 'Длительность (кадров)', def: 24, min: 2, max: 2000 },
     { type: 'check', key: 'fpEase', label: 'Плавный старт и финиш', def: true },
@@ -201,9 +195,12 @@ registerTool({
   ],
   down(e) {
     D = null;
-    const why = whyNot(app.active);
+    const res = resolveAt(e);
+    const why = whyNot(res && res.L);
     if (why) { app.toast(why, 3500); return; }
-    D = { pts: [[e.x, e.y]], sx: e.sx, sy: e.sy };
+    if (res.pick) app.setActive(res.pick.id);
+    D = { pts: [[e.x, e.y]], sx: e.sx, sy: e.sy, res };
+    this.hv = res;
     shown = null;
     app.render();
   },
@@ -216,15 +213,20 @@ registerTool({
   },
   up(e) {
     if (!D) return;
-    const raw = D.pts;
+    const raw = D.pts, res = D.res;
     raw.push([e.x, e.y]);
     D = null;
-    apply(raw);
+    apply(raw, res);
     app.render();
   },
   cancel() { D = null; },
+  hover(e) {
+    app.setCursor('crosshair');
+    const res = resolveAt(e);
+    if (targetKey(res) !== targetKey(this.hv)) app.render();
+    this.hv = res;
+  },
   overlay(ctx) {
-    const L = app.active;
     if (D) {
       strokeDocPath(ctx, D.pts, { color: BLUE, width: 3 });
       const dur = Math.max(2, Math.round(+opt('fpDur', 24) || 24));
@@ -235,12 +237,14 @@ registerTool({
       ctx.fillStyle = BLUE; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(st[0], st[1], 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
       ctx.restore();
-      drawPill(ctx, `${dur} ${frameWord(dur)}: кадры ${f0}–${f1}`, { x: D.sx + 16, y: D.sy + 14, bg: 'rgba(20,22,26,.8)' });
+      drawPill(ctx, `${dur} ${frameWord(dur)}: кадры ${f0}–${f1} · Esc — отмена`, { x: D.sx + 16, y: D.sy + 14, bg: 'rgba(20,22,26,.8)' });
       return;
     }
-    if (!L || L.lock || L.type === 'audio') return;
-    const tg = drawTargetHint(ctx, L);
-    if (!shown) drawPill(ctx, `Нарисуйте путь: ${tg.name} поедет по нему с кадра ${startFrame()}`, { dot: BLUE });
+    const res = targetAlive(this.hv) ? this.hv : resolveAt(null);
+    if (!res) { if (!shown) drawPill(ctx, 'Зажмите кнопку мыши на объекте и нарисуйте путь, по которому он поедет', { dot: BLUE }); return; }
+    if (whyNot(res.L)) return;
+    drawTargetHint(ctx, res.tg);
+    if (!shown) drawPill(ctx, `Нарисуйте путь от объекта: ${res.tg.name} поедет по нему с кадра ${startFrame()}`, { dot: BLUE });
   },
 });
 
@@ -265,6 +269,16 @@ registerOverlay((ctx) => {
 });
 
 app.on('docloaded', () => { D = null; shown = null; });
+
+// Пока рисуется путь, клавиши не меняют кадр/инструмент (иначе путь лёг бы не туда); Esc — отменить путь
+function onKey(ev) {
+  if (!D) return;
+  ev.preventDefault();
+  ev.stopImmediatePropagation();
+  if (ev.type === 'keydown' && ev.key === 'Escape') { D = null; app.render(); app.toast('Путь отменён', 1500); }
+}
+window.addEventListener('keydown', onKey, true);
+window.addEventListener('keyup', onKey, true);
 
 registerMenu('Анимация', () => [
   { label: 'Путь движения (нарисовать)', icon: 'followpath', key: 'U', action: () => app.cmd.setTool('followpath') },
