@@ -203,6 +203,137 @@ function wave({ bones: b, layers }, o) {
   keysFrom(o, b.foreL.ang, [[24, -12], [48, 0]]);
 }
 
+// ---------- Морти ----------
+// Те же кости, что у остальных персонажей (позы, ходьба и «Оживить» работают сразу), но свой рисунок:
+// большая голова, глаза-«пуговицы», жёлтая футболка, джинсы и кеды. Рот — переключатель с 5 фазами (липсинк),
+// глаза моргают. Тонкие тёмные контуры у линий рук и ног — нижним, более толстым штрихом.
+const MORTY = {
+  skin: '#fbd8b6', skinShade: '#ecc39c', ink: '#2d221c',
+  hair: '#6b3f1f', hairInk: '#3d230f',
+  shirt: '#f6df4c', shirtShade: '#e4c93c',
+  pants: '#4e7cc6', pantsShade: '#4471b9',
+  shoe: '#ffffff', sole: '#c7ccd4',
+  mouth: '#6e2431', tongue: '#e97a86',
+};
+
+// Точка в системе руки: s — вдоль руки от плеча, t — поперёк (к телу у ближней руки)
+const armPt = (x, y, deg) => { const a = (deg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a); return (u, v, k = 1) => [x + u * c - v * s, y + u * s + v * c, k]; };
+
+function mortyArm(d, L, x, y, deg, side, shade, bones) {
+  const m = MORTY, at = armPt(x, y, deg), skin = shade ? m.skinShade : m.skin;
+  const bone = [8, 32, 62, 90, 112].map((u) => at(u, 0));
+  L.paths.push(
+    P(d, bone, false, line(m.ink, 15)),
+    P(d, bone, false, line(skin, 10)),
+    // кисть — жёстко на предплечье: ладонь, большой палец и пальцы
+    P(d, [at(112, 6.5 * side), at(118, 10.5 * side), at(126, 9 * side), at(131, 1 * side), at(129, -6 * side), at(121, -9.5 * side), at(112, -6.5 * side)], true, style(skin, m.ink, 2.5), bones[1]),
+    P(d, [at(124, 7.5 * side), at(127, 3 * side)], false, line(m.ink, 1.8), bones[1]),
+    // короткий рукав футболки — жёстко на плече
+    P(d, [at(-7, 0), at(-1, 12.5), at(26, 12, 0), at(28.5, 0), at(26, -12, 0), at(-1, -12.5)], true, style(shade ? m.shirtShade : m.shirt, m.ink, 3), bones[0]),
+  );
+}
+
+function mortyShoe(d, x, mir, bone) {
+  const m = MORTY, X = (u) => x + u * mir;
+  return [
+    P(d, [[X(-17), 199], [X(-2), 194], [X(16), 197], [X(24), 205], [X(21), 212, 0], [X(-17), 212, 0], [X(-21), 205]], true, style(m.shoe, m.ink, 2.5), bone),
+    P(d, [[X(-19), 208, 0], [X(22), 208, 0]], false, line(m.sole, 2.5), bone),
+    P(d, [[X(-6), 198], [X(1), 202], [X(8), 199]], false, line(m.sole, 2), bone),
+  ];
+}
+
+function mortyMouth(d) {
+  const m = MORTY, inside = (pts) => P(d, pts, true, style(m.mouth, m.ink, 2.5));
+  const teeth = (y0, y1, w) => P(d, [[-w, y0, 0], [w, y0, 0], [w - 1.5, y1, 0], [1.5 - w, y1, 0]], true, style('#ffffff', null, 0));
+  const tongue = (y, rx, ry) => P(d, oval(0, y, rx, ry), true, style(m.tongue, null, 0));
+  const sw = newLayer(d, 'switch', 'Рот');
+  const shapes = [
+    vec(d, 'Рот 1 — закрыт', P(d, [[-14, -15], [-5, -17.5], [4, -15.5], [13, -17]], false, line(m.ink, 3))),
+    vec(d, 'Рот 2 — чуть открыт', inside([[-12, -17, 0], [0, -16], [12, -17, 0], [6, -12], [-6, -12]])),
+    vec(d, 'Рот 3 — открыт', inside([[-13, -18, 0], [0, -16.5], [13, -18, 0], [8, -9.5], [0, -7], [-8, -9.5]]), tongue(-9.5, 5, 2.2)),
+    vec(d, 'Рот 4 — широко', inside([[-15, -19, 0], [0, -17], [15, -19, 0], [10, -6.5], [0, -2.5], [-10, -6.5]]), teeth(-17.4, -14.6, 9.5), tongue(-6, 6, 2.6)),
+    vec(d, 'Рот 5 — очень широко', inside([[-17, -21, 0], [0, -18], [17, -21, 0], [12, -4.5], [0, 1.5], [-12, -4.5]]), teeth(-19, -15.6, 11), tongue(-3, 7, 3.2)),
+  ];
+  sw.children.push(...shapes); // снизу вверх: закрыт → широко открыт (так работает «Липсинк по звуку»)
+  sw.sw.k[0].v = String(shapes[0].id);
+  sw.lib = 'mouth';
+  sw.open = false;
+  return sw;
+}
+
+function morty(d, cx, o = {}) {
+  const m = MORTY;
+  const res = buildCharacter(d, { name: o.name || 'Морти', colors: { skin: m.skin, skinDark: m.ink, outline: m.ink, shirt: m.shirt, pants: m.pants } });
+  const { rig, bones: b, layers } = res;
+  for (const L of Object.values(layers)) L.paths = [];
+
+  mortyArm(d, layers.farArm, -38, 18, 105, -1, true, [b.armL.id, b.foreL.id]);
+  mortyArm(d, layers.nearArm, 38, 18, 75, 1, false, [b.armR.id, b.foreR.id]);
+
+  const leg = (x) => [[x, 106], [x + Math.sign(x), 152], [x + 2 * Math.sign(x), 196]];
+  for (const [x, B] of [[-17, b.legL], [17, b.legR]]) {
+    layers.legs.paths.push(P(d, leg(x), false, line(m.ink, 27)), P(d, leg(x), false, line(x < 0 ? m.pantsShade : m.pants, 22)));
+    layers.legs.paths.push(...mortyShoe(d, x * 1.45, Math.sign(x), B.id));
+  }
+
+  layers.torso.paths.push(
+    P(d, [[-8, -6, 0], [8, -6, 0], [9, 17, 0], [-9, 17, 0]], true, style(m.skin, m.ink, 3)), // шея
+    P(d, [[-34, 94, 0], [34, 94, 0], [35, 122], [0, 128], [-35, 122]], true, style(m.pants, m.ink, 3)), // джинсы у пояса
+    P(d, [[-15, 10, 0], [-33, 15], [-41, 27], [-41, 64], [-39, 103, 0], [0, 107], [39, 103, 0], [41, 64], [41, 27], [33, 15], [15, 10, 0], [0, 20]], true, style(m.shirt, m.ink, 3)),
+    P(d, [[-17, 13], [0, 24], [17, 13]], false, line(m.shirtShade, 2.5)), // ворот
+    P(d, [[-24, 96], [-14, 99]], false, line(m.shirtShade, 2.5)), // складка
+  );
+
+  const H = layers.head.paths;
+  H.push(
+    P(d, oval(-54, -42, 8, 11), true, style(m.skin, m.ink, 3)), // уши
+    P(d, oval(54, -42, 8, 11), true, style(m.skin, m.ink, 3)),
+    P(d, [[-55, -48], [-51, -42], [-55, -36]], false, line(m.ink, 2)),
+    P(d, [[55, -48], [51, -42], [55, -36]], false, line(m.ink, 2)),
+    // голова: широкий лоб, мягкий подбородок
+    P(d, [[0, -100], [40, -92], [57, -62], [53, -24], [30, 2], [0, 8], [-30, 2], [-53, -24], [-57, -62], [-40, -92]], true, style(m.skin, m.ink, 3)),
+    // волосы: шапочка с волнистой линией лба и бакенбардами
+    P(d, [[-55, -46, 0], [-60, -72], [-46, -96], [-18, -107], [14, -107], [44, -97], [60, -73], [55, -46, 0], [50, -62], [40, -76], [21, -82], [3, -78, 0], [-12, -83], [-34, -78], [-49, -63]], true, style(m.hair, m.hairInk, 3)),
+    P(d, [[-1, -32], [4, -27], [0, -22]], false, line(m.ink, 2.5)), // нос
+  );
+
+  const E = layers.eyes;
+  E.paths.push(
+    P(d, oval(-15.5, -50, 15.5, 15.5), true, style('#ffffff', m.ink, 3)),
+    P(d, oval(15.5, -50, 15.5, 15.5), true, style('#ffffff', m.ink, 3)),
+    P(d, oval(-12, -48, 2.6, 2.6), true, style(m.ink, null, 0)),
+    P(d, oval(14, -49, 2.6, 2.6), true, style(m.ink, null, 0)),
+  );
+  E.origin = [0, -50];
+  E.lib = 'eyes';
+  blinkKeys(E, cx);
+
+  const mouth = mortyMouth(d);
+  mouth.bind = b.head.id;
+  rig.children.splice(rig.children.indexOf(layers.head) + 1, 0, mouth);
+  rig.origin = [0, 212];
+  rig.lib = 'char';
+  if (o.talk) mortyTalk(res, mouth, animOffset(cx, 48));
+  return rig;
+}
+
+// «Ой, блин!»: всплёскивает руками, мотает головой и тараторит
+function mortyTalk({ bones: b, layers }, mouth, o) {
+  keysFrom(o, b.body.ang, [[12, -87], [24, -92], [36, -88], [48, -90]]);
+  keysFrom(o, b.head.ang, [[6, -7], [14, 5], [22, -5], [30, 7], [38, -3], [48, 0]]);
+  keysFrom(o, b.armR.ang, [[8, 118], [20, 108], [32, 124], [40, 118], [48, 165]]);
+  keysFrom(o, b.foreR.ang, [[8, -72], [16, -50], [24, -82], [32, -56], [40, -64], [48, 0]]);
+  keysFrom(o, b.armL.ang, [[10, 236], [22, 246], [34, 232], [48, 195]]);
+  keysFrom(o, b.foreL.ang, [[10, 66], [22, 80], [34, 58], [48, 0]]);
+  const kid = (i) => String(mouth.children[i].id);
+  if (o > 0) setKey(mouth.sw, o, kid(0), 'step');
+  [[4, 2], [6, 4], [8, 1], [10, 3], [13, 4], [15, 2], [17, 0], [20, 3], [22, 1], [24, 4], [27, 2], [29, 3], [32, 0], [34, 4], [37, 1], [39, 3], [42, 2], [44, 0]]
+    .forEach(([f, i]) => setKey(mouth.sw, f + o, kid(i), 'step'));
+  layers.eyes.scl.k = [layers.eyes.scl.k[0]];
+  keysFrom(o, layers.eyes.scl, [[18, [1, 1]], [20, [1, 0.08]], [22, [1, 1]], [40, [1, 1]], [42, [1, 0.08]], [44, [1, 1]]], 'linear');
+  layers.eyes.scl.k[0].i = 'linear';
+}
+
 // ---------- каталог ----------
 // Поля: id, cat, name, tags, build(doc, cx) → слой (геометрия вокруг 0,0), kind ('char'|'bg'|'part'|'shadow'),
 // anim (есть готовая анимация), loop [с, по] — кадры для живой миниатюры, thumbFrame, preview(doc, слой) — только для миниатюры,
@@ -230,6 +361,15 @@ item({
   id: 'kid-wave', stand: true, cat: 'chars', kind: 'char', name: 'Мальчик машет', tags: 'мальчик в кепке персонаж зеленый кепка машет привет анимация готовая кости',
   anim: true, loop: [1, 48], thumbFrame: 14,
   build: (d, cx) => character(d, cx, { name: 'Мальчик в кепке', colors: GREEN, extra: capExtra, wave: true }),
+});
+item({
+  id: 'morty', stand: true, cat: 'chars', kind: 'char', name: 'Морти', tags: 'морти morty мальчик подросток персонаж желтая футболка джинсы кеды кости скелет моргает рот липсинк',
+  build: (d, cx) => morty(d, cx),
+});
+item({
+  id: 'morty-talk', stand: true, cat: 'chars', kind: 'char', name: 'Морти говорит', tags: 'морти morty говорит болтает руки нервничает ой блин анимация готовая кости липсинк',
+  anim: true, loop: [1, 48], thumbFrame: 10,
+  build: (d, cx) => morty(d, cx, { name: 'Морти', talk: true }),
 });
 
 // --- природа ---
